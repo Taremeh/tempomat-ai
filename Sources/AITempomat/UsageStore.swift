@@ -58,8 +58,8 @@ final class UsageStore {
     var savedArchiveURL: URL? { archiveURL }
     private let defaults: UserDefaults
     private let storageName: String?
-    /// Claude Code's folder, for the tokens used in past windows; nil leaves them out.
-    private let claudeDir: URL?
+    /// The profile's Claude Code sessions, for the tokens used in past windows; nil leaves them out.
+    private let transcripts: SessionScope?
     private let refreshInterval: TimeInterval
     private var pollTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
@@ -75,7 +75,7 @@ final class UsageStore {
     /// A nil storage ID retains the original app's history and settings. Every named profile
     /// gets independent files and calibration. The optional dependencies keep tests isolated.
     init(source: any UsageSource, history: History? = nil, archive: WindowArchive? = nil, persist: Bool,
-         claudeDir: URL? = nil, storageID: String? = nil,
+         transcripts: SessionScope? = nil, storageID: String? = nil,
          dataFolder: URL? = nil, defaults: UserDefaults = .standard) {
         self.source = source
         self.defaults = defaults
@@ -87,12 +87,17 @@ final class UsageStore {
         refreshInterval = interval >= 30 ? interval : 120
         historyURL = persist ? folder.appending(path: "history.json") : nil
         archiveURL = persist ? folder.appending(path: "windows.json") : nil
-        self.claudeDir = claudeDir
+        self.transcripts = transcripts
         self.history = history ?? historyURL.flatMap { Self.load(History.self, from: $0) } ?? History()
         self.archive = archive ?? archiveURL.flatMap { Self.load(WindowArchive.self, from: $0) } ?? WindowArchive()
         savesGaugeChoice = persist
         if persist, let saved = defaults.stringArray(forKey: settingsKey(SettingsKey.gaugeChoice)), saved.count == 2 {
             gaugeChoice = (saved[0], saved[1])
+        }
+        // Windows kept before the app told the desktop app's logins apart hold every login's
+        // sessions in ~/.claude. Saved as it is: merging the file back in would undo it.
+        if let transcripts, self.archive.removeSessions(where: transcripts.filter().isForeign), let archiveURL {
+            Self.save(self.archive, to: archiveURL)
         }
     }
 
@@ -189,7 +194,7 @@ final class UsageStore {
     }
 
     private func scheduleEstimationIfNeeded() {
-        guard claudeDir != nil, estimateTask == nil,
+        guard transcripts != nil, estimateTask == nil,
               Date().timeIntervalSince(lastEstimate) > 3 * 3600 else { return }
         let generation = generation
         estimateTask = Task { [weak self] in
@@ -277,12 +282,12 @@ final class UsageStore {
         archive.add(PastWindow(meter: meter.id, start: start, reset: reset, source: .recorded, samples: samples, sessions: nil))
         saveArchive()
 
-        guard meter.id == PastWindow.sessionMeter, let claudeDir else { return }
+        guard meter.id == PastWindow.sessionMeter, let transcripts else { return }
         let generation = generation
         let id = UUID()
         archiveTasks[id] = Task { [weak self] in
             let sessions = await Task.detached(priority: .utility) {
-                FleetScanner.sessionRequests(in: claudeDir, since: start)
+                FleetScanner.sessionRequests(in: transcripts, since: start)
             }.value
             guard let self else { return }
             defer { self.archiveTasks[id] = nil }
@@ -298,7 +303,7 @@ final class UsageStore {
     /// the prompts and subagents of windows kept before the app logged them.
     func estimateMissedWindows() async {
         let now = Date()
-        guard let claudeDir, !isReadingTranscripts, !Task.isCancelled else { return }
+        guard let transcripts, !isReadingTranscripts, !Task.isCancelled else { return }
         let generation = generation
         lastEstimate = now
         let length: TimeInterval = 5 * 3600
@@ -319,7 +324,7 @@ final class UsageStore {
 
         let readFrom = min(from, unlogged ?? from)
         let sessions = await Task.detached(priority: .utility) {
-            FleetScanner.sessionRequests(in: claudeDir, since: readFrom)
+            FleetScanner.sessionRequests(in: transcripts, since: readFrom)
         }.value
         guard !Task.isCancelled, self.generation == generation else { return }
         if unlogged != nil {

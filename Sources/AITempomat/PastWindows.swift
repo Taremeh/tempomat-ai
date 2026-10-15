@@ -131,10 +131,22 @@ struct PastWindow: Codable, Identifiable, Sendable {
         }
         slices = sessions == nil ? [] : totals
         self.sessions = shares.sorted { $0.tokens > $1.tokens }
+        tokensPerPercent = Self.tokensPerPercent(tokens: totals.reduce(0, +), samples: self.samples)
+    }
 
-        let percent = self.samples.map(\.p).max() ?? 0
-        let tokens = totals.reduce(0, +)
-        tokensPerPercent = percent >= TokenBudget.minimumPercent && tokens > 0 ? Double(tokens) / percent : nil
+    /// Tokens per 1% of the limit, when the window can tell: 5% or more read as used.
+    private static func tokensPerPercent(tokens: Int, samples: [History.Sample]) -> Double? {
+        let percent = samples.map(\.p).max() ?? 0
+        return percent >= TokenBudget.minimumPercent && tokens > 0 ? Double(tokens) / percent : nil
+    }
+
+    /// Takes sessions out of the window, with their tokens.
+    mutating func removeSessions(where remove: (Session) -> Bool) {
+        for session in sessions where remove(session) && session.slices.count == slices.count {
+            for index in slices.indices { slices[index] = max(0, slices[index] - session.slices[index]) }
+        }
+        sessions.removeAll(where: remove)
+        tokensPerPercent = Self.tokensPerPercent(tokens: tokens, samples: samples)
     }
 
     /// The 5-minute slice a time falls in, if it's inside the window.
@@ -266,13 +278,13 @@ extension SessionRequests {
 }
 
 extension FleetScanner {
-    /// What every session did since `start`, from the transcripts written since then, ended
-    /// sessions included. Parses only the lines past windows need (see `carriesHistory`), so
-    /// going over months of transcripts takes seconds rather than minutes.
-    static func sessionRequests(in claudeDir: URL, since start: Date) -> [SessionRequests] {
+    /// What the profile's sessions did since `start`, from the transcripts written since then,
+    /// ended sessions included. Parses only the lines past windows need (see `carriesHistory`),
+    /// so going over months of transcripts takes seconds rather than minutes.
+    static func sessionRequests(in scope: SessionScope, since start: Date) -> [SessionRequests] {
         var sessions: [String: SessionRequests] = [:]
         var workflows: [String: String] = [:]
-        for file in transcripts(in: claudeDir, modifiedSince: start) {
+        for file in transcripts(in: scope, modifiedSince: start) {
             var state = TranscriptState()
             let size = (try? file.url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { $0.map(UInt64.init) } ?? 0
             state.catchUp(file.url, size: size, keep: TranscriptState.carriesHistory)
@@ -310,6 +322,17 @@ struct WindowArchive: Codable, Sendable {
                 windows[index].sessions[slot].log(session, start: start, reset: reset)
             }
         }
+    }
+
+    /// Takes the sessions `foreign` picks, and their tokens, out of every window. Returns whether
+    /// a window held one.
+    mutating func removeSessions(where foreign: (String) -> Bool) -> Bool {
+        var removed = false
+        for index in windows.indices where windows[index].sessions.contains(where: { foreign($0.id) }) {
+            windows[index].removeSessions { foreign($0.id) }
+            removed = true
+        }
+        return removed
     }
 
     /// Adds a window. A recorded one replaces any estimate it overlaps, and the same window

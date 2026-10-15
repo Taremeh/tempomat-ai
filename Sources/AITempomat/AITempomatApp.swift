@@ -61,40 +61,50 @@ struct AITempomatApp: App {
         exit(0)
     }
 
-    /// Scans the running Claude Code sessions once, prints what the Agents view would show, and exits.
+    /// Scans each profile's running Claude Code sessions once, prints what its Agents view would
+    /// show, and exits.
     private static func printFleet() -> Never {
         Task { @MainActor in
             let started = Date()
-            let fleet = FleetStore(scanner: FleetScanner())
-            await fleet.refresh()
-            let now = fleet.lastUpdated ?? Date()
-            for session in fleet.sessions {
-                let state = session.isBusy ? "busy" : "idle"
-                print("\(session.isBusy ? "●" : "○") \(session.name) [\(session.project), \(state) \(Format.duration(now.timeIntervalSince(session.statusSince))),"
-                      + " open \(Format.duration(now.timeIntervalSince(session.startedAt)))]")
-                print("  tasks \(session.tasks.done)/\(session.tasks.total) · subagents \(session.runningAgents.count)/\(session.agents.count)"
-                      + " · workflows \(session.workflowsRunning) running, \(session.workflowsDone) done")
-                print("  \(Format.tokens(session.totalTokens)) tokens (\(Format.tokens(session.outputTokens)) out) in \(session.requests.count) requests"
-                      + " · context \(Format.tokens(session.context)) · \(session.turns.count) turns · \(session.completions.count) tasks finished")
-                if let last = session.turns.last {
-                    print("  last turn \(Format.clock(last.start))–\(Format.clock(last.end))")
-                }
-                for agent in session.runningAgents { print("    ↳ \(agent.label)") }
+            var count = 0
+            for runtime in ProfilesStore(persist: false).profiles where runtime.supportsSessions {
+                await runtime.fleet.refresh()
+                print("\(runtime.profile.name) [\(runtime.profile.path)]: \(counted(runtime.fleet.sessions.count, "session")) running")
+                printSessions(of: runtime.fleet)
+                count += runtime.fleet.sessions.count
             }
-            print("scanned \(fleet.sessions.count) sessions in \(String(format: "%.2f", Date().timeIntervalSince(started))) s")
+            print("scanned \(count) sessions in \(String(format: "%.2f", Date().timeIntervalSince(started))) s")
             exit(0)
         }
         RunLoop.main.run()
         exit(0)
     }
 
-    /// A store with the saved readings and past windows that saves nothing, and so leaves the
-    /// running app's files alone, with the windows missed estimated from the transcripts.
+    private static func printSessions(of fleet: FleetStore) {
+        let now = fleet.lastUpdated ?? Date()
+        for session in fleet.sessions {
+            let state = session.isBusy ? "busy" : "idle"
+            print("\(session.isBusy ? "●" : "○") \(session.name) [\(session.project), \(state) \(Format.duration(now.timeIntervalSince(session.statusSince))),"
+                  + " open \(Format.duration(now.timeIntervalSince(session.startedAt)))]")
+            print("  tasks \(session.tasks.done)/\(session.tasks.total) · subagents \(session.runningAgents.count)/\(session.agents.count)"
+                  + " · workflows \(session.workflowsRunning) running, \(session.workflowsDone) done")
+            print("  \(Format.tokens(session.totalTokens)) tokens (\(Format.tokens(session.outputTokens)) out) in \(session.requests.count) requests"
+                  + " · context \(Format.tokens(session.context)) · \(session.turns.count) turns · \(session.completions.count) tasks finished")
+            if let last = session.turns.last {
+                print("  last turn \(Format.clock(last.start))–\(Format.clock(last.end))")
+            }
+            for agent in session.runningAgents { print("    ↳ \(agent.label)") }
+        }
+    }
+
+    /// A store with the original profile's saved readings and past windows that saves nothing,
+    /// and so leaves the running app's files alone, with the windows missed estimated from the
+    /// transcripts.
     static func savedStore(estimating: Bool = true) async -> UsageStore {
         let store = UsageStore(source: ClaudeCLISource(),
                                history: UsageStore.load(History.self, from: UsageStore.historyFile, keepUnreadable: false),
                                archive: UsageStore.load(WindowArchive.self, from: UsageStore.archiveFile, keepUnreadable: false),
-                               persist: false, claudeDir: FleetScanner.defaultClaudeDir)
+                               persist: false, transcripts: UsageProfile.originalCLI.sessionScope)
         if estimating { await store.estimateMissedWindows() }
         return store
     }
@@ -214,11 +224,12 @@ enum PreviewRenderer {
         }
     }
 
-    /// Renders the expanded panel (or another page) from live data, light and dark, and exits:
-    /// the plan usage and its recorded history, and the sessions running now. Saves nothing.
+    /// Renders the original profile's expanded panel (or another page) from live data, light and
+    /// dark, and exits: the plan usage and its recorded history, and the sessions running now.
+    /// Saves nothing.
     static func renderLive(to url: URL, page: PanelPage = .tempomat) -> Never {
         Task { @MainActor in
-            let fleet = FleetStore(scanner: FleetScanner())
+            let fleet = FleetStore(scanner: UsageProfile.originalCLI.sessionScope.map { FleetScanner(scope: $0) })
             await fleet.refresh()
             let store = await AITempomatApp.savedStore(estimating: page == .history)
             await store.refresh()

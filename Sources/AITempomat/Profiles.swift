@@ -44,15 +44,32 @@ struct UsageProfile: Codable, Identifiable, Equatable {
         case .claudeDesktop:
             return read(directory.appending(path: "config.json")) { $0["lastKnownAccountUuid"] }
         case .claudeCLI:
-            let file = usesLegacyHistory ? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude.json")
-                : directory.appending(path: ".claude.json")
-            return read(file) { ($0["oauthAccount"] as? [String: Any])?["accountUuid"] }
+            return ClaudeLogin.read(settings: cliSettingsFile)?.account
         case .codex:
             return nil
         }
     }
 
+    /// A CLI profile's settings, which name its login: `.claude.json` in its configuration folder,
+    /// `~/.claude.json` for the default login.
+    var cliSettingsFile: URL {
+        usesLegacyHistory ? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude.json")
+            : directory.appending(path: ".claude.json")
+    }
+
+    /// The Claude Code sessions a CLI profile counts: those run on its login, in its folder or in
+    /// the desktop app's. Other profiles have none.
+    var sessionScope: SessionScope? {
+        provider == .claudeCLI ? SessionScope(folder: directory, settingsFile: cliSettingsFile) : nil
+    }
+
     static let originalCLIName = "Claude Code (original)"
+
+    /// The terminal's default login, which keeps the history files from before profiles.
+    static var originalCLI: UsageProfile {
+        UsageProfile(id: "claude-cli-original", name: originalCLIName, provider: .claudeCLI, path: "~/.claude",
+                     usesLegacyHistory: true)
+    }
 
     /// A desktop profile signed in to the same account as a CLI profile shows the same usage twice,
     /// so the two become one: the CLI's, which reads usage without Keychain access and knows the
@@ -108,10 +125,10 @@ final class ProfileRuntime: Identifiable {
         case .claudeCLI: source = ClaudeCLISource(configDirectory: profile.usesLegacyHistory ? nil : profile.directory)
         case .codex: source = CodexUsageSource(home: profile.directory)
         }
-        let transcripts = profile.provider == .claudeCLI ? profile.directory : nil
-        store = UsageStore(source: source, persist: persist, claudeDir: transcripts,
+        let transcripts = profile.sessionScope
+        store = UsageStore(source: source, persist: persist, transcripts: transcripts,
                            storageID: profile.usesLegacyHistory ? nil : profile.id)
-        fleet = FleetStore(scanner: transcripts.map { FleetScanner(claudeDir: $0) })
+        fleet = FleetStore(scanner: transcripts.map { FleetScanner(scope: $0) })
     }
 }
 
@@ -229,8 +246,7 @@ final class ProfilesStore {
         }
         // The terminal's default login. When the desktop app is signed in to the same account, the
         // two are merged (see mergingDuplicateLogins); a CLI that isn't signed in stays out of the switcher.
-        var cli = UsageProfile(id: "claude-cli-original", name: UsageProfile.originalCLIName, provider: .claudeCLI,
-                               path: "~/.claude", usesLegacyHistory: true)
+        var cli = UsageProfile.originalCLI
         cli.showInMenuBar = profiles.allSatisfy { $0.provider != .claudeDesktop } || cli.claudeAccountID != nil
         profiles.append(cli)
         return profiles
