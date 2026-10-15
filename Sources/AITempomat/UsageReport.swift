@@ -15,7 +15,10 @@ struct LimitRow: Decodable, Sendable {
     let resetsAt: String?   // ISO 8601
     let scope: Scope?
     let severity: String    // "normal", "warning", "critical"
-    let isActive: Bool      // the server's pick for a single-value indicator
+    var isActive: Bool      // the server's pick for a single-value indicator
+    /// Providers may report other window lengths and labels than Claude's session/week pair.
+    var displayTitle: String? = nil
+    var windowDuration: TimeInterval? = nil
 }
 
 enum UsageError: Error {
@@ -81,23 +84,25 @@ struct Meter: Identifiable, Sendable {
     init(_ row: LimitRow) {
         let scopeName = row.scope?.model?.displayName ?? row.scope?.surface?.displayName
         id = [row.kind, scopeName].compactMap { $0 }.joined(separator: ":")
-        title = switch row.kind {
+        let defaultTitle = switch row.kind {
         case "session": "5-hour limit"
         case "weekly_all": "Weekly · all models"
         case "weekly_scoped": "Weekly · \(scopeName ?? "scoped")"
         default: [row.kind.replacingOccurrences(of: "_", with: " ").capitalized, scopeName]
             .compactMap { $0 }.joined(separator: " · ")
         }
+        title = row.displayTitle ?? defaultTitle
         percent = row.percent
         resetsAt = row.resetsAt.flatMap(Meter.parseDate)
         severity = row.severity
         isActive = row.isActive
-        window = switch row.group {
+        let defaultWindow: TimeInterval? = switch row.group {
         case "session": 5 * 3600
         case "weekly": 7 * 86400
         default: nil
         }
-        unit = row.group == "weekly" ? .perDay : .perHour
+        window = row.windowDuration ?? defaultWindow
+        unit = (window ?? 0) >= 86400 ? .perDay : .perHour
     }
 
     /// A past window's reading, for the History page.

@@ -22,14 +22,15 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private static let margin: CGFloat = 6
     private static let cornerRadius: CGFloat = 10
 
-    init(store: UsageStore, fleet: FleetStore) {
+    /// One item for every profile: it shows the profile selected in the panel's switcher.
+    init(profiles: ProfilesStore) {
         // Both views take their ideal size and report it; the window follows (see `place`).
         content = SizingHostingView(rootView: AnyView(
-            PanelView(store: store, fleet: fleet)
+            ProfilePanelView(profiles: profiles)
                 .fixedSize()
                 .reportingSize(to: contentSize)))
         label = SizingHostingView(rootView: AnyView(
-            HStack(spacing: 4) { MenuBarLabel(store: store) }
+            SelectedProfileLabel(profiles: profiles)
                 .font(.system(size: 13))
                 .fixedSize()
                 .reportingSize(to: labelSize)))

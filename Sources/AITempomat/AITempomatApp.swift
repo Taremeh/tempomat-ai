@@ -7,6 +7,13 @@ struct AITempomatApp: App {
 
     init() {
         let arguments = CommandLine.arguments
+        if let index = arguments.firstIndex(of: "--render-profiles"), index + 1 < arguments.count {
+            PreviewRenderer.renderProfiles(to: URL(fileURLWithPath: arguments[index + 1]))
+            exit(0)
+        }
+        if arguments.contains("--print-profiles") {
+            Self.printProfiles()
+        }
         if let index = arguments.firstIndex(of: "--render-preview"), index + 1 < arguments.count {
             PreviewRenderer.render(to: URL(fileURLWithPath: arguments[index + 1]))
             exit(0)
@@ -31,16 +38,27 @@ struct AITempomatApp: App {
         }
 
         let isDemo = arguments.contains("--demo")
-        let store = isDemo
-            ? UsageStore(source: DemoSource(), history: DemoSource.history(), archive: DemoSource.archive(), persist: false)
-            : UsageStore(source: ClaudeCLISource(), persist: true, claudeDir: FleetScanner.defaultClaudeDir)
-        store.start()
-        let fleet = isDemo
-            ? FleetStore(scanner: nil, sessions: DemoFleet.sessions())
-            : FleetStore(scanner: FleetScanner())
-        // The first scan reads every transcript in full; do it now so the Agents page opens ready.
-        Task { await fleet.refresh() }
-        AppDelegate.model = (store, fleet)
+        let profiles = ProfilesStore(demo: isDemo)
+        profiles.start()
+        AppDelegate.model = profiles
+    }
+
+    /// Scans the running Claude Code sessions once, prints what the Agents view would show, and exits.
+    private static func printProfiles() -> Never {
+        Task { @MainActor in
+            let profiles = ProfilesStore(persist: false)
+            for runtime in profiles.profiles {
+                await runtime.store.refresh()
+                print("\(runtime.profile.name) [\(runtime.profile.provider.title)]")
+                if let problem = runtime.store.problem { print("  \(problem.title): \(problem.detail)") }
+                for meter in runtime.store.meters {
+                    print("  \(meter.title): \(Format.percent(meter.percent)) used; resets \(meter.resetsAt.map { Format.clock($0) } ?? "unknown")")
+                }
+            }
+            exit(0)
+        }
+        RunLoop.main.run()
+        exit(0)
     }
 
     /// Scans the running Claude Code sessions once, prints what the Agents view would show, and exits.
@@ -160,12 +178,12 @@ struct AITempomatApp: App {
 /// Puts the menu bar item up once the app has launched.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    static var model: (store: UsageStore, fleet: FleetStore)?
+    static var model: ProfilesStore?
     private var statusPanel: StatusPanelController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let model = Self.model else { return }
-        statusPanel = StatusPanelController(store: model.store, fleet: model.fleet)
+        statusPanel = StatusPanelController(profiles: model)
         // For development: open the panel right away.
         if CommandLine.arguments.contains("--open-panel") { statusPanel?.show() }
     }
@@ -175,6 +193,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// for checking the layout.
 @MainActor
 enum PreviewRenderer {
+    static func renderProfiles(to url: URL) {
+        let profiles = ProfilesStore(demo: true)
+        let defaults = UserDefaults(suiteName: "AITempomat.preview.profiles")!
+        defaults.set(DisplayMode.total.rawValue, forKey: SettingsKey.mode)
+        defaults.set(AmountShown.left.rawValue, forKey: SettingsKey.amount)
+        let content = HStack(alignment: .top, spacing: 16) {
+            VStack(spacing: 0) {
+                // Mock of the menu bar item.
+                SelectedProfileLabel(profiles: profiles)
+                    .font(.system(size: 13)).padding(10)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                ProfilePanelView(profiles: profiles)
+            }
+            ProfileSettingsView(profiles: profiles)
+        }
+        .defaultAppStorage(defaults)
+        for scheme in [ColorScheme.light, .dark] {
+            write(content, scheme: scheme, to: url, hosted: true)
+        }
+    }
+
     /// Renders the expanded panel (or another page) from live data, light and dark, and exits:
     /// the plan usage and its recorded history, and the sessions running now. Saves nothing.
     static func renderLive(to url: URL, page: PanelPage = .tempomat) -> Never {

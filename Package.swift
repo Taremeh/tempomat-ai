@@ -5,6 +5,7 @@ let package = Package(
     name: "AITempomat",
     platforms: [.macOS(.v14)],
     targets: [
-        .executableTarget(name: "AITempomat", path: "Sources/AITempomat")
+        .executableTarget(name: "AITempomat", path: "Sources/AITempomat"),
+        .testTarget(name: "AITempomatTests", dependencies: ["AITempomat"])
     ]
 )

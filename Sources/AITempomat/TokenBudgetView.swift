@@ -93,7 +93,7 @@ struct TokenBudgetView: View {
     var body: some View {
         if let meter = store.meters.first(where: { $0.unit == .perHour && $0.window != nil }) {
             let budget = TokenBudget.make(meter: meter, requests: fleet.recentRequests, metric: metric,
-                                          stored: UserDefaults.standard.double(forKey: SettingsKey.tokensPerPercent(metric)),
+                                          stored: store.tokensPerPercent(for: metric),
                                           now: fleet.lastUpdated ?? Date())
             VStack(alignment: .leading, spacing: 4) {
                 Divider()
@@ -113,7 +113,7 @@ struct TokenBudgetView: View {
             // Keep a well-measured value for the start of the next window.
             .onChange(of: budget?.measured) { _, measured in
                 if let measured, meter.percent >= 10 {
-                    UserDefaults.standard.set(measured, forKey: SettingsKey.tokensPerPercent(metric))
+                    store.recordTokensPerPercent(measured, for: metric)
                 }
             }
         }

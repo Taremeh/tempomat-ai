@@ -93,7 +93,7 @@ extension WindowSnapshot {
         let window = PastWindow(meter: meter.id, start: start, reset: reset, source: .recorded,
                                 samples: store.samples(for: meter), sessions: sessions)
         let budget = TokenBudget.make(meter: meter, requests: fleet.recentRequests, metric: .all,
-                                      stored: UserDefaults.standard.double(forKey: SettingsKey.tokensPerPercent(.all)),
+                                      stored: store.tokensPerPercent(for: .all),
                                       now: fleet.lastUpdated ?? now)
         return WindowSnapshot(window: window, isCurrent: reset > now, meter: meter,
                               pace: store.pace(for: meter, method: paceMethod), percentUsed: meter.percent, budget: budget)
@@ -271,15 +271,14 @@ private struct DataNote: View {
                 Text("Reading Claude Code's transcripts for the windows the app didn't record…")
             } else {
                 Image(systemName: "externaldrive")
-                Text("Kept for good in ~/Library/Application Support/AI Tempomat, in windows.json. Windows marked ≈ are estimated from Claude Code's transcripts.")
+                Text("Saved in this profile’s windows.json. Windows marked ≈ are estimated from its Claude Code transcripts.")
             }
             Spacer(minLength: 8)
             Button("Show in Finder") {
-                let file = UsageStore.archiveFile
-                if FileManager.default.fileExists(atPath: file.path) {
+                if let file = store.savedArchiveURL, FileManager.default.fileExists(atPath: file.path) {
                     NSWorkspace.shared.activateFileViewerSelecting([file])
-                } else {
-                    NSWorkspace.shared.open(UsageStore.dataFolder)
+                } else if let folder = store.savedDataFolder {
+                    NSWorkspace.shared.open(folder)
                 }
             }
             .buttonStyle(.plain)

@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Observation
 import ServiceManagement
 
@@ -53,26 +54,44 @@ final class UsageStore {
     private let source: any UsageSource
     private let historyURL: URL?
     private let archiveURL: URL?
+    let savedDataFolder: URL?
+    var savedArchiveURL: URL? { archiveURL }
+    private let defaults: UserDefaults
+    private let storageName: String?
     /// Claude Code's folder, for the tokens used in past windows; nil leaves them out.
     private let claudeDir: URL?
     private let refreshInterval: TimeInterval
     private var pollTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
+    private var estimateTask: Task<Void, Never>?
+    private var archiveTasks: [UUID: Task<Void, Never>] = [:]
+    /// Invalidates results from work started before a profile was stopped or reconfigured.
+    private var generation = 0
+    private var refreshID: UUID?
+    private var estimateID: UUID?
     private var lastEstimate = Date.distantPast
     private let savesGaugeChoice: Bool
 
-    /// `persist` reads and saves the files in `dataFolder`; `claudeDir` is where to read transcripts.
+    /// A nil storage ID retains the original app's history and settings. Every named profile
+    /// gets independent files and calibration. The optional dependencies keep tests isolated.
     init(source: any UsageSource, history: History? = nil, archive: WindowArchive? = nil, persist: Bool,
-         claudeDir: URL? = nil) {
+         claudeDir: URL? = nil, storageID: String? = nil,
+         dataFolder: URL? = nil, defaults: UserDefaults = .standard) {
         self.source = source
-        let interval = UserDefaults.standard.double(forKey: "refreshInterval")
+        self.defaults = defaults
+        storageName = storageID.map(Self.safeStorageName)
+        let root = dataFolder ?? Self.dataFolder
+        let folder = storageName.map { root.appending(path: "profiles").appending(path: $0) } ?? root
+        savedDataFolder = persist ? folder : nil
+        let interval = defaults.double(forKey: "refreshInterval")
         refreshInterval = interval >= 30 ? interval : 120
-        historyURL = persist ? Self.historyFile : nil
-        archiveURL = persist ? Self.archiveFile : nil
+        historyURL = persist ? folder.appending(path: "history.json") : nil
+        archiveURL = persist ? folder.appending(path: "windows.json") : nil
         self.claudeDir = claudeDir
         self.history = history ?? historyURL.flatMap { Self.load(History.self, from: $0) } ?? History()
         self.archive = archive ?? archiveURL.flatMap { Self.load(WindowArchive.self, from: $0) } ?? WindowArchive()
         savesGaugeChoice = persist
-        if persist, let saved = UserDefaults.standard.stringArray(forKey: SettingsKey.gaugeChoice), saved.count == 2 {
+        if persist, let saved = defaults.stringArray(forKey: settingsKey(SettingsKey.gaugeChoice)), saved.count == 2 {
             gaugeChoice = (saved[0], saved[1])
         }
     }
@@ -116,36 +135,95 @@ final class UsageStore {
     var typicalTokensPerPercent: Double? {
         let measured = archive.windows.filter { $0.meter == PastWindow.sessionMeter }.suffix(20).compactMap(\.tokensPerPercent).sorted()
         if !measured.isEmpty { return measured[measured.count / 2] }
-        let stored = UserDefaults.standard.double(forKey: SettingsKey.tokensPerPercent(.all))
+        let stored = tokensPerPercent(for: .all)
         return stored > 0 ? stored : nil
+    }
+
+    /// Applies the same profile namespace to all calibration and gauge preferences.
+    func settingsKey(_ base: String) -> String {
+        storageName.map { "profiles.\($0).\(base)" } ?? base
+    }
+
+    func tokensPerPercent(for metric: TokenMetric) -> Double {
+        defaults.double(forKey: settingsKey(SettingsKey.tokensPerPercent(metric)))
+    }
+
+    func recordTokensPerPercent(_ value: Double, for metric: TokenMetric) {
+        guard savesGaugeChoice, value.isFinite, value > 0 else { return }
+        defaults.set(value, forKey: settingsKey(SettingsKey.tokensPerPercent(metric)))
     }
 
     func start() {
         guard pollTask == nil else { return }
+        let generation = generation
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
+                guard self?.generation == generation else { return }
                 await self?.refresh()
+                guard !Task.isCancelled, self?.generation == generation,
+                      let interval = self?.refreshInterval else { return }
                 // Every few hours, catch up on windows the app missed (asleep, or not running).
-                if let self, Date().timeIntervalSince(self.lastEstimate) > 3 * 3600 {
-                    Task { await self.estimateMissedWindows() }
-                }
-                try? await Task.sleep(for: .seconds(self?.refreshInterval ?? 120))
+                self?.scheduleEstimationIfNeeded()
+                do { try await Task.sleep(for: .seconds(interval)) } catch { return }
             }
         }
     }
 
+    /// Stops polling and ignores late fetch/transcript results. Calling start again begins
+    /// immediately, even when a source has not yet returned from its cancelled request.
+    func stop() {
+        generation += 1
+        pollTask?.cancel()
+        pollTask = nil
+        refreshTask?.cancel()
+        refreshTask = nil
+        estimateTask?.cancel()
+        estimateTask = nil
+        for task in archiveTasks.values { task.cancel() }
+        archiveTasks.removeAll()
+        refreshID = nil
+        estimateID = nil
+        isRefreshing = false
+        isReadingTranscripts = false
+        lastEstimate = .distantPast
+    }
+
+    private func scheduleEstimationIfNeeded() {
+        guard claudeDir != nil, estimateTask == nil,
+              Date().timeIntervalSince(lastEstimate) > 3 * 3600 else { return }
+        let generation = generation
+        estimateTask = Task { [weak self] in
+            await self?.estimateMissedWindows()
+            if self?.generation == generation { self?.estimateTask = nil }
+        }
+    }
+
     func refreshIfStale() {
-        guard !isRefreshing, Date().timeIntervalSince(lastUpdated ?? .distantPast) > 30 else { return }
-        Task { await refresh() }
+        guard !isRefreshing, refreshTask == nil,
+              Date().timeIntervalSince(lastUpdated ?? .distantPast) > 30 else { return }
+        let generation = generation
+        refreshTask = Task { [weak self] in
+            await self?.refresh()
+            if self?.generation == generation { self?.refreshTask = nil }
+        }
     }
 
     func refresh() async {
-        guard !isRefreshing else { return }
+        guard !isRefreshing, !Task.isCancelled else { return }
+        let generation = generation
+        let id = UUID()
+        refreshID = id
         isRefreshing = true
-        defer { isRefreshing = false }
+        defer {
+            if refreshID == id {
+                refreshID = nil
+                isRefreshing = false
+            }
+        }
 
         do {
             let rows = try await source.fetch()
+            guard !Task.isCancelled, self.generation == generation else { return }
             let now = Date()
             meters = rows.map(Meter.init)
             if let gaugeChoice, gaugeChoice.over != serverPick?.id {
@@ -159,6 +237,8 @@ final class UsageStore {
             problem = nil
             saveHistory()
         } catch {
+            guard !Task.isCancelled, self.generation == generation,
+                  !(error is CancellationError) else { return }
             problem = UsageProblem(error)
         }
     }
@@ -172,6 +252,8 @@ final class UsageStore {
     // MARK: Launch at login
 
     private(set) var opensAtLogin = SMAppService.mainApp.status == .enabled
+
+    func refreshLoginStatus() { opensAtLogin = SMAppService.mainApp.status == .enabled }
 
     func setOpensAtLogin(_ enabled: Bool) {
         do {
@@ -196,13 +278,18 @@ final class UsageStore {
         saveArchive()
 
         guard meter.id == PastWindow.sessionMeter, let claudeDir else { return }
-        Task {
+        let generation = generation
+        let id = UUID()
+        archiveTasks[id] = Task { [weak self] in
             let sessions = await Task.detached(priority: .utility) {
                 FleetScanner.sessionRequests(in: claudeDir, since: start)
             }.value
-            archive.add(PastWindow(meter: meter.id, start: start, reset: reset, source: .recorded, samples: samples,
-                                   sessions: sessions))
-            saveArchive()
+            guard let self else { return }
+            defer { self.archiveTasks[id] = nil }
+            guard !Task.isCancelled, self.generation == generation else { return }
+            self.archive.add(PastWindow(meter: meter.id, start: start, reset: reset, source: .recorded, samples: samples,
+                                        sessions: sessions))
+            self.saveArchive()
         }
     }
 
@@ -211,21 +298,30 @@ final class UsageStore {
     /// the prompts and subagents of windows kept before the app logged them.
     func estimateMissedWindows() async {
         let now = Date()
+        guard let claudeDir, !isReadingTranscripts, !Task.isCancelled else { return }
+        let generation = generation
         lastEstimate = now
-        guard let claudeDir, !isReadingTranscripts else { return }
         let length: TimeInterval = 5 * 3600
         let from = archive.estimatedThrough ?? .distantPast
         // A window that opened since then may still be open.
         let cutoff = now.addingTimeInterval(-length)
         let unlogged = archive.loggedBack == true ? nil : archive.windows.filter(\.lacksLog).map(\.start).min()
         guard cutoff > from || unlogged != nil else { return }
+        let id = UUID()
+        estimateID = id
         isReadingTranscripts = true
-        defer { isReadingTranscripts = false }
+        defer {
+            if estimateID == id {
+                estimateID = nil
+                isReadingTranscripts = false
+            }
+        }
 
         let readFrom = min(from, unlogged ?? from)
         let sessions = await Task.detached(priority: .utility) {
             FleetScanner.sessionRequests(in: claudeDir, since: readFrom)
         }.value
+        guard !Task.isCancelled, self.generation == generation else { return }
         if unlogged != nil {
             archive.logBack(from: sessions)
             archive.loggedBack = true
@@ -253,6 +349,14 @@ final class UsageStore {
     static var historyFile: URL { dataFolder.appending(path: "history.json") }
     static var archiveFile: URL { dataFolder.appending(path: "windows.json") }
 
+    /// Lowercase IDs remain readable; all others use a stable digest to prevent path
+    /// traversal, filename length failures and collisions on case-insensitive volumes.
+    private static func safeStorageName(_ id: String) -> String {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-_")
+        if !id.isEmpty, id.utf8.count <= 120, id.unicodeScalars.allSatisfy(allowed.contains) { return id }
+        return "profile-" + SHA256.hash(data: Data(id.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
     /// Reads a saved file. One that can't be read is moved aside, so it isn't overwritten.
     static func load<T: Decodable>(_ type: T.Type, from url: URL, keepUnreadable: Bool = true) -> T? {
         guard let data = try? Data(contentsOf: url) else { return nil }
@@ -275,9 +379,9 @@ final class UsageStore {
     private func saveGaugeChoice() {
         guard savesGaugeChoice else { return }
         if let gaugeChoice {
-            UserDefaults.standard.set([gaugeChoice.meter, gaugeChoice.over], forKey: SettingsKey.gaugeChoice)
+            defaults.set([gaugeChoice.meter, gaugeChoice.over], forKey: settingsKey(SettingsKey.gaugeChoice))
         } else {
-            UserDefaults.standard.removeObject(forKey: SettingsKey.gaugeChoice)
+            defaults.removeObject(forKey: settingsKey(SettingsKey.gaugeChoice))
         }
     }
 

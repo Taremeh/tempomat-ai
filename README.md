@@ -1,6 +1,18 @@
 # AI Tempomat
 
-A macOS menu bar gauge for your Claude Code plan limits. The switch at the top of the panel picks how the big dial reads.
+A macOS menu bar gauge for Claude and ChatGPT/Codex subscription limits, with independent profiles.
+
+One menu bar item shows the selected profile. The row at the top of the panel shows every profile as its app icon and percentage; click one to switch (the selected profile’s name sits at the end of the row). Under **Profiles** (the gear button), rename profiles, add a profile folder, and choose which profiles appear in that row. Hidden profiles continue tracking.
+
+On first launch, Tempomat detects `~/Library/Application Support/Claude`, `~/Library/Application Support/Claude-Work`, and the installed ChatGPT/Codex app. **Claude Code (original)** retains the original terminal login and its existing history. When a Claude desktop profile is signed in to the same account as a CLI profile (compared by account ID from `config.json` and `.claude.json`, no credentials read), the two are merged into the CLI profile, which needs no Keychain access and keeps the session details.
+
+- **Claude desktop:** click **Connect Claude…** for each profile and authorize local sign-in access. Tempomat reads Claude’s Keychain encryption key, decrypts that profile’s saved OAuth token in memory, and sends it only to Anthropic’s HTTPS usage endpoint. It does not log or save tokens, refresh credentials, or change Claude’s login. macOS may also request Keychain access. Tokens with extra scopes (newer desktop versions add `user:plugins`) are accepted; with several organizations, the one in the desktop app’s `plan-usage-history.json` is used. Expired or ambiguous logins produce a setup message; they never silently fall back to another account. Claude’s desktop storage format is an implementation detail and may change with app updates.
+- **ChatGPT / Codex:** uses the installed app’s Codex CLI and its existing sign-in through the [documented app-server usage request](https://learn.chatgpt.com/docs/app-server). The default home is `~/.codex`; a separate home can be added as another profile. No model turn is started. The app displays the subscription windows actually reported by that account, including weekly-only plans; separate ChatGPT web feature/message limits are not exposed by this interface.
+- **Claude Code CLI:** add a configuration folder with its own plan login. Desktop data folders and CLI configuration folders are different. The original profile uses `~/.claude`.
+
+Each new profile keeps readings and completed windows under `~/Library/Application Support/AI Tempomat/profiles/<profile-id>/`. Gauge choices and token calibration are separate too. The original CLI profile keeps using the existing history files. Removing a profile retains its files. Desktop and ChatGPT/Codex profiles show percentage history; detailed local session/token charts are available for CLI profiles with their own transcripts.
+
+The switches below the profile selector control how the big dial reads.
 
 **Total** works like a fuel gauge, from 0 to 100% of the limit:
 - **Left:** what's still in the tank, from E to F. The red stripe is the last 10%.
@@ -81,13 +93,13 @@ The clock icon at the top right opens the History page: every 5-hour window, pas
 
 ## Setup
 
-The app reads usage by running `claude -p "/usage"`. This is a local command, so it never calls the model and costs no quota. The terminal CLI needs its own login, because the desktop app's login isn't shared with it. Run this once:
+For the optional **Claude Code CLI** profile, usage comes from `claude -p "/usage"`, which makes no model call. The terminal CLI needs its own login. For the original default CLI profile, run:
 
 ```bash
 claude auth login
 ```
 
-Then build, install and launch the app:
+For another CLI profile, run the login with that profile’s `CLAUDE_CONFIG_DIR`. Desktop profiles use the Connect button instead. Build, install and launch the app:
 
 ```bash
 ./scripts/build-app.sh --install
@@ -99,9 +111,18 @@ Check that the CLI side works without the UI:
 .build/release/AITempomat --print-usage
 ```
 
+Read all configured profiles without saving usage, run the tests, or render sample profile screens:
+
+```bash
+"build/AI Tempomat.app/Contents/MacOS/AITempomat" --print-profiles
+./scripts/test.sh
+mkdir -p build/previews
+.build/release/AITempomat --render-profiles "$PWD/build/previews/profiles.png"
+```
+
 ## How it works
 
-- **Data:** the `usage_report.rate_limits.limits[]` rows from `/usage` (stream-json output). The report is marked experimental, so its shape may change. Supported since Claude Code 2.1.29x.
+- **Claude CLI data:** the `usage_report.rate_limits.limits[]` rows from `/usage` (stream-json output). The report is marked experimental, so its shape may change. Supported since Claude Code 2.1.29x. Desktop profiles read Anthropic’s usage endpoint; ChatGPT/Codex reads `account/rateLimits/read` from its app-server.
 - **CLI:** the app uses the newest `claude` binary it can find, including the copy bundled with the Claude desktop app.
 - **Polling:** every 2 minutes, plus a refresh whenever you open the panel.
 - **Where the data is kept:** in `~/Library/Application Support/AI Tempomat/`. macOS doesn't clear this folder, and Time Machine backs it up.
@@ -110,7 +131,7 @@ Check that the CLI side works without the UI:
   - Both are written whole to a new file and then swapped in, so a crash can't leave half a file. A file that can't be read is moved aside as `….unreadable-<time>.json` rather than overwritten. When two copies of the app run, each adds what the other saved.
   - The tokens come from Claude Code's transcripts in `~/.claude/projects`. Claude Code deletes transcripts after `cleanupPeriodDays` (30 days unless you set it in `~/.claude/settings.json`), but the windows keep their own copy of the counts.
 - **Pace:**
-  - Overall = used ÷ time since the window opened. The 5-hour window is 5 hours and weekly windows are 7 days.
+  - Overall = used ÷ time since the window opened. Claude session windows are 5 hours and weekly windows are 7 days; ChatGPT/Codex window lengths come from the response.
   - Sensitive = the slope over the last 30 minutes (12 hours for weekly limits).
   - Each falls back to the other when it has no data. Sensitive needs about 15 minutes of samples first (6 hours for weekly limits).
   - Usage only moves in 1% steps, so Sensitive is jumpy at low usage.

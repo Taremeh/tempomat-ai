@@ -1,0 +1,9 @@
+Generated with the built-in imagegen tool.
+
+Use case: logo-brand
+Asset type: production macOS app icon, square 1024 x 1024 PNG, transparent pixels outside the icon tile.
+Primary request: Create a polished, distinctive application icon for AI Tempomat, a macOS menu bar app that monitors AI subscription usage like a cruise-control gauge.
+Subject: one beautifully simple precision speedometer/fuel gauge symbol. A broad warm ivory circular dial and a single bold near-black needle, with a vivid warm orange partial progress arc around the upper-left side and a very small muted red end segment. One small dark central pivot. At most five chunky minimal tick marks, no numbers.
+Style: refined macOS desktop icon, restrained shallow three-dimensional depth, crisp and graphic at small sizes, subtle tactile ceramic surface, not a detailed illustration. Use a softly rounded charcoal graphite square tile with tiny bevel and gentle lighting. Gauge takes most of the tile and is centered with balanced negative space. Front-on orthographic view, not tilted.
+Composition: icon tile centered, fills about 88% of the square canvas, evenly padded. Outside tile fully transparent, including rounded corners. Strong readable silhouette at 32 pixels.
+Constraints: no text, no letters, no brand logos, no AI sparkles, no stars, no background scene, no extra objects, no hard cast shadow outside tile. Deliver one icon only, not a mockup or grid.
