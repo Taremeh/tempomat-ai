@@ -374,8 +374,8 @@ extension Data {
 
 // MARK: - Scanning the fleet
 
-/// Finds a profile's running sessions in `<config folder>/sessions` (see `SessionScope`) and
-/// reads what their transcripts added since the last scan.
+/// Finds the running sessions in `~/.claude/sessions` that count (see `SessionScope`) and reads
+/// what their transcripts added since the last scan.
 actor FleetScanner {
     private struct Registry: Decodable {
         let pid: Int32
@@ -403,29 +403,26 @@ actor FleetScanner {
 
     static let defaultClaudeDir = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude")
 
-    init(scope: SessionScope) {
+    init(scope: SessionScope = .standard) {
         self.scope = scope
     }
 
     func scan(now: Date = Date()) -> [FleetSession] {
         let filter = scope.filter()
-        let registries = scope.folders.flatMap { claudeDir in
-            let entries = (try? FileManager.default.contentsOfDirectory(at: claudeDir.appending(path: "sessions"),
-                                                                       includingPropertiesForKeys: nil)) ?? []
-            return entries
-                .filter { $0.pathExtension == "json" && Int32($0.deletingPathExtension().lastPathComponent) != nil }
-                .compactMap { try? JSONDecoder().decode(Registry.self, from: Data(contentsOf: $0)) }
-                .filter { filter.includes($0.sessionId, host: $0.hostSessionId, in: claudeDir) && Self.isClaude(pid: $0.pid) }
-                .map { (entry: $0, claudeDir: claudeDir) }
-        }
+        let registryDir = scope.folder.appending(path: "sessions")
+        let entries = (try? FileManager.default.contentsOfDirectory(at: registryDir, includingPropertiesForKeys: nil)) ?? []
+        let registries = entries
+            .filter { $0.pathExtension == "json" && Int32($0.deletingPathExtension().lastPathComponent) != nil }
+            .compactMap { try? JSONDecoder().decode(Registry.self, from: Data(contentsOf: $0)) }
+            .filter { filter.includes($0.sessionId, host: $0.hostSessionId) && Self.isClaude(pid: $0.pid) }
 
-        let sessions = registries.map { session(for: $0.entry, in: $0.claudeDir, now: now) }
+        let sessions = registries.map { session(for: $0, now: now) }
         // Forget the transcripts of sessions that ended, unless they still count for recent usage.
         files = files.filter { path, _ in recentPaths.contains(path) || sessions.contains { path.contains($0.id) } }
         return sessions
     }
 
-    /// What the profile's Claude Code sessions on this Mac did since `start`, sessions that have
+    /// What the Claude Code sessions on this Mac that count did since `start`, sessions that have
     /// ended included: their requests, your prompts, their tasks and subagents. The usage that
     /// fills the plan's current limit window, as far as this Mac sees it.
     func recentSessions(since start: Date) -> [SessionRequests] {
@@ -453,7 +450,7 @@ actor FleetScanner {
         let sessionFolder: URL
     }
 
-    /// Every transcript of the profile's sessions written to since `start`, sessions that have
+    /// Every transcript of the sessions that count written to since `start`, sessions that have
     /// ended included.
     static func transcripts(in scope: SessionScope, modifiedSince start: Date) -> [TranscriptFile] {
         let filter = scope.filter()
@@ -466,34 +463,32 @@ actor FleetScanner {
         }
 
         var found: [TranscriptFile] = []
-        for claudeDir in scope.folders {
-            for project in entries(claudeDir.appending(path: "projects")) {
-                let entries = entries(project)
-                var activeSessions: Set<String> = []
-                for transcript in entries where transcript.pathExtension == "jsonl" {
-                    let session = transcript.deletingPathExtension().lastPathComponent
-                    guard filter.includes(session, in: claudeDir), recent(transcript) else { continue }
-                    found.append(TranscriptFile(url: transcript, session: session, isSubagent: false,
-                                                sessionFolder: project.appending(path: session)))
-                    activeSessions.insert(session)
-                }
-                // Session folders hold the subagent transcripts. A folder's own date doesn't change
-                // when a file in it grows, so its session's transcript and its subagents folder count too.
-                for folder in entries where (try? folder.resourceValues(forKeys: keys))?.isDirectory == true {
-                    let subagents = folder.appending(path: "subagents")
-                    guard filter.includes(folder.lastPathComponent, in: claudeDir),
-                          activeSessions.contains(folder.lastPathComponent) || recent(folder) || recent(subagents) else { continue }
-                    for agent in agentFiles(in: subagents) where agent.modified >= start {
-                        found.append(TranscriptFile(url: agent.url, session: folder.lastPathComponent, isSubagent: true,
-                                                    workflow: agent.workflow, sessionFolder: folder))
-                    }
+        for project in entries(scope.folder.appending(path: "projects")) {
+            let entries = entries(project)
+            var activeSessions: Set<String> = []
+            for transcript in entries where transcript.pathExtension == "jsonl" {
+                let session = transcript.deletingPathExtension().lastPathComponent
+                guard filter.includes(session), recent(transcript) else { continue }
+                found.append(TranscriptFile(url: transcript, session: session, isSubagent: false,
+                                            sessionFolder: project.appending(path: session)))
+                activeSessions.insert(session)
+            }
+            // Session folders hold the subagent transcripts. A folder's own date doesn't change
+            // when a file in it grows, so its session's transcript and its subagents folder count too.
+            for folder in entries where (try? folder.resourceValues(forKeys: keys))?.isDirectory == true {
+                let subagents = folder.appending(path: "subagents")
+                guard filter.includes(folder.lastPathComponent),
+                      activeSessions.contains(folder.lastPathComponent) || recent(folder) || recent(subagents) else { continue }
+                for agent in agentFiles(in: subagents) where agent.modified >= start {
+                    found.append(TranscriptFile(url: agent.url, session: folder.lastPathComponent, isSubagent: true,
+                                                workflow: agent.workflow, sessionFolder: folder))
                 }
             }
         }
         return found
     }
 
-    private func session(for entry: Registry, in claudeDir: URL, now: Date) -> FleetSession {
+    private func session(for entry: Registry, now: Date) -> FleetSession {
         let project = URL(fileURLWithPath: entry.cwd).lastPathComponent
         let startedAt = Date(timeIntervalSince1970: entry.startedAt / 1000)
         let isBusy = entry.status == "busy"
@@ -503,7 +498,7 @@ actor FleetScanner {
             statusSince: Date(timeIntervalSince1970: (entry.statusUpdatedAt ?? entry.updatedAt ?? entry.startedAt) / 1000),
             lastActivity: startedAt)
 
-        guard let dir = transcriptDir(for: entry, in: claudeDir) else { return session }
+        guard let dir = transcriptDir(for: entry) else { return session }
         let mainURL = dir.appending(path: "\(entry.sessionId).jsonl")
         let main = read(mainURL)
         session.turns = main.turns(openEnd: isBusy ? now : nil)
@@ -566,9 +561,9 @@ actor FleetScanner {
 
     /// `~/.claude/projects/<cwd with every non-alphanumeric as ->/`; a session that moved
     /// (a worktree, /cd) keeps its transcript where it began, so fall back to a search.
-    private func transcriptDir(for entry: Registry, in claudeDir: URL) -> URL? {
+    private func transcriptDir(for entry: Registry) -> URL? {
         if let known = transcriptDirs[entry.sessionId] { return known }
-        let projects = claudeDir.appending(path: "projects")
+        let projects = scope.folder.appending(path: "projects")
         let slug = String(entry.cwd.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) && $0.isASCII ? Character($0) : "-" })
         let candidates = [projects.appending(path: slug)]
             + ((try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? [])

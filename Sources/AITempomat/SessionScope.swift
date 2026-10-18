@@ -25,8 +25,8 @@ struct ClaudeLogin: Hashable, Sendable {
     }
 }
 
-/// The logins behind profiles and sessions, from files that rarely change; each is read again
-/// only when it does.
+/// The logins behind `claude` and the desktop app's sessions, from files that rarely change; each
+/// is read again only when it does.
 ///
 /// The desktop app runs Claude Code in its default folder, `~/.claude`, whichever account it is
 /// signed in to, so a second instance (one started with `--user-data-dir`, such as Claude-Work)
@@ -107,58 +107,52 @@ final class ClaudeLogins: @unchecked Sendable {
     }
 }
 
-/// The Claude Code sessions that count for one profile: those run on its login.
+/// The Claude Code sessions that count: those run on the login `claude` uses.
 ///
-/// Claude Code keeps a session in its configuration folder: `~/.claude`, or the folder
-/// CLAUDE_CONFIG_DIR names. A profile's terminal sessions are in its own folder; the desktop
-/// app's are all in `~/.claude`, told apart by the login the app ran them on (see `ClaudeLogins`).
+/// Claude Code keeps its sessions in `~/.claude`, and the desktop app runs it there too, whichever
+/// account the app is signed in to. Sessions a second instance (such as Claude-Work) ran on another
+/// account are told apart by the desktop app's records of them (see `ClaudeLogins`).
 struct SessionScope: Sendable {
-    /// The profile's configuration folder.
+    /// Claude Code's folder.
     let folder: URL
     /// Its settings, which name its login; nil counts every session in `folder`.
     let settingsFile: URL?
-    /// Where its sessions may be: its own folder, and the one the desktop app keeps its sessions in.
-    let folders: [URL]
     private let logins: ClaudeLogins
 
-    init(folder: URL, settingsFile: URL? = nil, desktopFolder: URL = FleetScanner.defaultClaudeDir,
-         logins: ClaudeLogins = .shared) {
+    /// `~/.claude`, on the login `~/.claude.json` names.
+    static let standard = SessionScope(
+        folder: FleetScanner.defaultClaudeDir,
+        settingsFile: FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude.json"))
+
+    init(folder: URL, settingsFile: URL? = nil, logins: ClaudeLogins = .shared) {
         self.folder = folder.standardizedFileURL
         self.settingsFile = settingsFile
-        let desktopFolder = desktopFolder.standardizedFileURL
-        folders = settingsFile == nil || desktopFolder.path == self.folder.path ? [self.folder] : [self.folder, desktopFolder]
         self.logins = logins
     }
 
     /// Which sessions count, as the files say now: taken once for each scan.
     func filter() -> SessionFilter {
         guard let settingsFile, let login = logins.login(settings: settingsFile) else {
-            return SessionFilter(folder: folder.path, login: nil, hosts: [:])
+            return SessionFilter(login: nil, hosts: [:])
         }
-        return SessionFilter(folder: folder.path, login: login, hosts: logins.desktopSessions())
+        return SessionFilter(login: login, hosts: logins.desktopSessions())
     }
 }
 
-/// Which sessions count for a profile, as `SessionScope.filter()` found them.
+/// Which sessions count, as `SessionScope.filter()` found them.
 struct SessionFilter {
-    /// The profile's configuration folder.
-    let folder: String
-    /// The profile's login; nil while it isn't known, which counts every session in its folder.
+    /// The login `claude` uses; nil while it isn't known, which counts every session.
     let login: ClaudeLogin?
     /// The login the desktop app ran each of its sessions on.
     let hosts: [String: ClaudeLogin]
 
-    /// Whether session `id`, found in the configuration folder `found`, counts: one the desktop
-    /// app ran (`host` is the app's id for it) when the app ran it on the profile's login, any
-    /// other when it is in the profile's own folder.
-    func includes(_ id: String, host: String? = nil, in found: URL) -> Bool {
-        if let login, let ranOn = hosts[id] ?? host.flatMap({ hosts[$0] }) { return login.matches(ranOn) }
-        return found.standardizedFileURL.path == folder
+    /// Whether session `id` counts: every session but those the desktop app ran on another
+    /// login (`host` is the app's id for it).
+    func includes(_ id: String, host: String? = nil) -> Bool {
+        guard let login, let ranOn = hosts[id] ?? host.flatMap({ hosts[$0] }) else { return true }
+        return login.matches(ranOn)
     }
 
-    /// Whether the desktop app ran session `id` on another login than the profile's.
-    func isForeign(_ id: String) -> Bool {
-        guard let login, let ranOn = hosts[id] else { return false }
-        return !login.matches(ranOn)
-    }
+    /// Whether the desktop app ran session `id` on another login.
+    func isForeign(_ id: String) -> Bool { !includes(id) }
 }

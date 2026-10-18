@@ -3,45 +3,51 @@ import Testing
 @testable import AITempomat
 
 /// Two desktop app instances, each signed in to its own account, run Claude Code in the same
-/// default folder; a terminal login in a folder of its own runs on the second account too.
+/// default folder, beside a terminal session.
 @Suite struct SessionScopeTests {
-    @Test func desktopSessionsCountForTheLoginTheyRanOn() throws {
+    @Test func sessionsCountForTheLoginClaudeUses() throws {
         let fixture = try SessionFixture()
         defer { fixture.remove() }
-        let personal = fixture.scope(folder: fixture.defaultFolder, settings: fixture.personalSettings)
-        let work = fixture.scope(folder: fixture.workFolder, settings: fixture.workFolder.appending(path: ".claude.json"))
-        #expect(personal.folders.map(\.path) == [fixture.defaultFolder.path])
-        #expect(work.folders.map(\.path) == [fixture.workFolder.path, fixture.defaultFolder.path])
-
+        let personal = fixture.scope(settings: fixture.personalSettings)
         #expect(fixture.sessions(in: personal) == [fixture.personalDesktop, fixture.terminal].sorted())
-        #expect(fixture.sessions(in: work) == [fixture.workDesktop, fixture.workTerminal].sorted())
-        let workFiles = FleetScanner.transcripts(in: work, modifiedSince: .distantPast)
-        #expect(workFiles.contains { $0.session == fixture.workDesktop && $0.isSubagent })
-        let requests = FleetScanner.sessionRequests(in: work, since: .distantPast)
-        #expect(Set(requests.map(\.id)) == [fixture.workDesktop, fixture.workTerminal])
-        #expect(requests.first { $0.id == fixture.workDesktop }?.requests.count == 2)
+        let requests = FleetScanner.sessionRequests(in: personal, since: .distantPast)
+        #expect(Set(requests.map(\.id)) == [fixture.personalDesktop, fixture.terminal])
 
         // A running session the desktop app hasn't named in its record yet goes by the app's own id.
-        let filter = work.filter()
-        #expect(filter.includes(UUID().uuidString.lowercased(), host: "local_work", in: fixture.defaultFolder))
-        #expect(!personal.filter().includes(UUID().uuidString.lowercased(), host: "local_work", in: fixture.defaultFolder))
-        #expect(filter.isForeign(fixture.personalDesktop))
-        #expect(!filter.isForeign(fixture.workDesktop))
+        let filter = personal.filter()
+        #expect(!filter.includes(UUID().uuidString.lowercased(), host: "local_work"))
+        #expect(filter.includes(UUID().uuidString.lowercased(), host: "local_personal"))
+        #expect(filter.isForeign(fixture.workDesktop))
+        #expect(!filter.isForeign(fixture.personalDesktop))
         #expect(!filter.isForeign(fixture.terminal))
     }
 
-    @Test func unknownLoginKeepsEverySessionInItsFolder() throws {
+    @Test func signingClaudeInToAnotherAccountFollowsIt() throws {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let work = fixture.scope(settings: fixture.workSettings)
+        #expect(fixture.sessions(in: work) == [fixture.workDesktop, fixture.terminal].sorted())
+        let files = FleetScanner.transcripts(in: work, modifiedSince: .distantPast)
+        #expect(files.contains { $0.session == fixture.workDesktop && $0.isSubagent })
+        let requests = FleetScanner.sessionRequests(in: work, since: .distantPast)
+        #expect(requests.first { $0.id == fixture.workDesktop }?.requests.count == 2)
+    }
+
+    @Test func unknownLoginKeepsEverySession() throws {
         let fixture = try SessionFixture()
         defer { fixture.remove() }
         let everything = [fixture.personalDesktop, fixture.workDesktop, fixture.terminal].sorted()
-        let signedOut = fixture.scope(folder: fixture.defaultFolder, settings: fixture.root.appending(path: "missing.json"))
+        let signedOut = fixture.scope(settings: fixture.root.appending(path: "missing.json"))
         #expect(fixture.sessions(in: signedOut) == everything)
         #expect(!signedOut.filter().isForeign(fixture.workDesktop))
         let unscoped = SessionScope(folder: fixture.defaultFolder)
         #expect(fixture.sessions(in: unscoped) == everything)
-        // Signed out elsewhere, a profile has only the sessions in its own folder.
-        let workSignedOut = fixture.scope(folder: fixture.workFolder, settings: fixture.root.appending(path: "missing.json"))
-        #expect(fixture.sessions(in: workSignedOut) == [fixture.workTerminal])
+    }
+
+    @Test func standardScopeReadsClaudesDefaultLogin() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        #expect(SessionScope.standard.folder.path == home.appending(path: ".claude").path)
+        #expect(SessionScope.standard.settingsFile == home.appending(path: ".claude.json"))
     }
 
     @Test func desktopSessionsKeepTheirLoginWhenTheRecordMovesOn() throws {
@@ -69,17 +75,6 @@ import Testing
         #expect(!login.matches(try #require(ClaudeLogin(account: other, organization: organization))))
         #expect(ClaudeLogin(account: "not-an-account", organization: organization) == nil)
         #expect(ClaudeLogin(account: account, organization: "not-an-organization")?.organization == nil)
-    }
-
-    @Test func cliProfilesReadTheirOwnLogin() {
-        let original = UsageProfile.originalCLI
-        #expect(original.cliSettingsFile == FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude.json"))
-        #expect(original.sessionScope?.folders.map(\.path) == [FleetScanner.defaultClaudeDir.path])
-        let work = UsageProfile(name: "Work", provider: .claudeCLI, path: "/tmp/claude-work")
-        #expect(work.cliSettingsFile.path == "/tmp/claude-work/.claude.json")
-        #expect(work.sessionScope?.folders.map(\.path) == ["/tmp/claude-work", FleetScanner.defaultClaudeDir.path])
-        #expect(UsageProfile(name: "Desktop", provider: .claudeDesktop, path: "/tmp/Claude").sessionScope == nil)
-        #expect(UsageProfile(name: "Codex", provider: .codex, path: "~/.codex").sessionScope == nil)
     }
 
     @Test func removingSessionsTakesOutTheirTokens() {
@@ -111,16 +106,12 @@ import Testing
                                sessions: [SessionRequests(id: fixture.workDesktop, requests: requests),
                                           SessionRequests(id: fixture.personalDesktop, requests: requests)]))
         let data = fixture.root.appending(path: "data")
-        let file = data.appending(path: "profiles/personal/windows.json")
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let file = data.appending(path: "windows.json")
+        try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
         try JSONEncoder().encode(archive).write(to: file)
 
-        let suite = "SessionScopeTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let scope = fixture.scope(folder: fixture.defaultFolder, settings: fixture.personalSettings)
-        let store = UsageStore(source: DemoSource(), persist: true, transcripts: scope, storageID: "personal",
-                               dataFolder: data, defaults: defaults)
+        let scope = fixture.scope(settings: fixture.personalSettings)
+        let store = UsageStore(source: DemoSource(), persist: true, transcripts: scope, dataFolder: data)
         #expect(store.archive.windows[0].sessions.map(\.id) == [fixture.personalDesktop])
         let saved = try JSONDecoder().decode(WindowArchive.self, from: Data(contentsOf: file))
         #expect(saved.windows[0].sessions.map(\.id) == [fixture.personalDesktop])
@@ -132,8 +123,8 @@ private struct SessionFixture {
     let root: URL
     /// Claude Code's default folder, where both desktop instances keep their sessions.
     let defaultFolder: URL
-    let workFolder: URL
     let personalSettings: URL
+    let workSettings: URL
     let personalDesktopFolder: URL
     let workDesktopFolder: URL
     let personalLogin = ClaudeLogin(account: UUID().uuidString, organization: UUID().uuidString)!
@@ -141,33 +132,31 @@ private struct SessionFixture {
     let personalDesktop = UUID().uuidString.lowercased()
     let workDesktop = UUID().uuidString.lowercased()
     let terminal = UUID().uuidString.lowercased()
-    let workTerminal = UUID().uuidString.lowercased()
     let logins: ClaudeLogins
 
     init() throws {
         root = FileManager.default.temporaryDirectory.appending(path: "AITempomatSessionTests-\(UUID().uuidString)")
         defaultFolder = root.appending(path: "claude")
-        workFolder = root.appending(path: "claude-work")
         personalSettings = root.appending(path: "claude.json")
+        workSettings = root.appending(path: "claude-work.json")
         personalDesktopFolder = root.appending(path: "Claude")
         workDesktopFolder = root.appending(path: "Claude-Work")
         let desktops = [personalDesktopFolder, workDesktopFolder]
         logins = ClaudeLogins(desktopFolders: { desktops })
 
-        try FileManager.default.createDirectory(at: workFolder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try settings(for: personalLogin).write(to: personalSettings)
-        try settings(for: workLogin).write(to: workFolder.appending(path: ".claude.json"))
+        try settings(for: workLogin).write(to: workSettings)
         try writeRecord("local_personal", session: personalDesktop, under: personalLogin, in: personalDesktopFolder)
         try writeRecord("local_work", session: workDesktop, under: workLogin, in: workDesktopFolder)
         for session in [personalDesktop, workDesktop, terminal] {
             try transcript(session, in: defaultFolder)
         }
-        try transcript(workTerminal, in: workFolder)
         try transcript("agent-a", in: defaultFolder, under: "\(workDesktop)/subagents")
     }
 
-    func scope(folder: URL, settings: URL) -> SessionScope {
-        SessionScope(folder: folder, settingsFile: settings, desktopFolder: defaultFolder, logins: logins)
+    func scope(settings: URL) -> SessionScope {
+        SessionScope(folder: defaultFolder, settingsFile: settings, logins: logins)
     }
 
     /// The sessions whose transcripts count for `scope`.

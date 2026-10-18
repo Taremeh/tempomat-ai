@@ -1,19 +1,10 @@
 # AI Tempomat
 
-A macOS menu bar gauge for Claude and ChatGPT/Codex subscription limits, with independent profiles.
+A macOS menu bar gauge for your Claude Code plan limits. The switch at the top of the panel picks how the big dial reads.
 
-One menu bar item shows the selected profile. The row at the top of the panel shows every profile as its app icon and percentage; click one to switch (the selected profile’s name sits at the end of the row). Under **Profiles** (the gear button), rename profiles, add a profile folder, and choose which profiles appear in that row. Hidden profiles continue tracking.
+It follows one account: the one `claude` is signed in to (`claude auth status` names it). Sign `claude` in to another account and the app follows it, though its history doesn't tell the two apart. The sessions it counts are the ones run on that account. A second desktop instance signed in to another account (such as `Claude-Work`, started with `--user-data-dir`) keeps its sessions in `~/.claude` too, and the app leaves those out (see **Which account ran a session** below).
 
-On first launch, Tempomat detects `~/Library/Application Support/Claude`, `~/Library/Application Support/Claude-Work`, and the installed ChatGPT/Codex app. **Claude Code (original)** retains the original terminal login and its existing history. When a Claude desktop profile is signed in to the same account as a CLI profile (compared by account ID from `config.json` and `.claude.json`, no credentials read), the two are merged into the CLI profile, which needs no Keychain access and keeps the session details.
-
-- **Claude desktop:** click **Connect Claude…** for each profile and authorize local sign-in access. Tempomat reads Claude’s Keychain encryption key, decrypts that profile’s saved OAuth token in memory, and sends it only to Anthropic’s HTTPS usage endpoint. It does not log or save tokens, refresh credentials, or change Claude’s login. macOS may also request Keychain access. Tokens with extra scopes (newer desktop versions add `user:plugins`) are accepted; with several organizations, the one in the desktop app’s `plan-usage-history.json` is used. Expired or ambiguous logins produce a setup message; they never silently fall back to another account. Claude’s desktop storage format is an implementation detail and may change with app updates.
-- **ChatGPT / Codex:** uses the installed app’s Codex CLI and its existing sign-in through the [documented app-server usage request](https://learn.chatgpt.com/docs/app-server). The default home is `~/.codex`; a separate home can be added as another profile. No model turn is started. The app displays the subscription windows actually reported by that account, including weekly-only plans; separate ChatGPT web feature/message limits are not exposed by this interface.
-- **Claude Code CLI:** add a configuration folder with its own plan login. Desktop data folders and CLI configuration folders are different. The original profile uses `~/.claude`.
-- **Sessions per account:** a CLI profile shows the Claude Code sessions run on its login: those in its configuration folder, and those the desktop app ran on the same account. The desktop app's Code tab keeps every account's sessions in `~/.claude`, also for a second instance such as `Claude-Work` (started with `--user-data-dir`), so Tempomat reads which account ran each from the desktop app's own record of it (`claude-code-sessions/<account>/<organization>/` in its data folder). A session another account ran counts for no other profile, and windows saved before Tempomat told them apart lose such sessions and their tokens at launch. While a profile's login can't be read, every session in its folder counts for it.
-
-Each new profile keeps readings and completed windows under `~/Library/Application Support/AI Tempomat/profiles/<profile-id>/`. Gauge choices and token calibration are separate too. The original CLI profile keeps using the existing history files. Removing a profile retains its files. Desktop and ChatGPT/Codex profiles show percentage history; detailed local session/token charts are available for CLI profiles with their own transcripts.
-
-The switches below the profile selector control how the big dial reads.
+For several accounts side by side, Claude desktop logins and ChatGPT/Codex, build the [`multi-profile`](https://github.com/Taremeh/tempomat-ai/tree/multi-profile) branch instead. Both are the same app (`local.ai-tempomat`), so installing one replaces the other, and they share this account's history and settings.
 
 **Total** works like a fuel gauge, from 0 to 100% of the limit:
 - **Left:** what's still in the tank, from E to F. The red stripe is the last 10%.
@@ -94,13 +85,13 @@ The clock icon at the top right opens the History page: every 5-hour window, pas
 
 ## Setup
 
-For the optional **Claude Code CLI** profile, usage comes from `claude -p "/usage"`, which makes no model call. The terminal CLI needs its own login. For the original default CLI profile, run:
+The app reads usage by running `claude -p "/usage"`. This is a local command, so it never calls the model and costs no quota. The terminal CLI needs its own login, because the desktop app's login isn't shared with it. Run this once:
 
 ```bash
 claude auth login
 ```
 
-For another CLI profile, run the login with that profile’s `CLAUDE_CONFIG_DIR`. Desktop profiles use the Connect button instead. Build, install and launch the app:
+Then build, install and launch the app:
 
 ```bash
 ./scripts/build-app.sh --install
@@ -112,27 +103,24 @@ Check that the CLI side works without the UI:
 .build/release/AITempomat --print-usage
 ```
 
-Read all configured profiles without saving usage, run the tests, or render sample profile screens:
+Run the tests:
 
 ```bash
-"build/AI Tempomat.app/Contents/MacOS/AITempomat" --print-profiles
 ./scripts/test.sh
-mkdir -p build/previews
-.build/release/AITempomat --render-profiles "$PWD/build/previews/profiles.png"
 ```
 
 ## How it works
 
-- **Claude CLI data:** the `usage_report.rate_limits.limits[]` rows from `/usage` (stream-json output). The report is marked experimental, so its shape may change. Supported since Claude Code 2.1.29x. Desktop profiles read Anthropic’s usage endpoint; ChatGPT/Codex reads `account/rateLimits/read` from its app-server.
+- **Data:** the `usage_report.rate_limits.limits[]` rows from `/usage` (stream-json output). The report is marked experimental, so its shape may change. Supported since Claude Code 2.1.29x.
 - **CLI:** the app uses the newest `claude` binary it can find, including the copy bundled with the Claude desktop app.
 - **Polling:** every 2 minutes, plus a refresh whenever you open the panel.
 - **Where the data is kept:** in `~/Library/Application Support/AI Tempomat/`. macOS doesn't clear this folder, and Time Machine backs it up.
   - `history.json` holds the readings of the windows still open.
   - `windows.json` keeps every window that has ended, for good: its readings, its tokens per 5 minutes, and each session's share, prompts, tasks and subagents. Windows the app recorded replace estimates of the same time.
   - Both are written whole to a new file and then swapped in, so a crash can't leave half a file. A file that can't be read is moved aside as `….unreadable-<time>.json` rather than overwritten. When two copies of the app run, each adds what the other saved.
-  - The tokens come from Claude Code's transcripts in `~/.claude/projects` (and a CLI profile's own folder), the profile's sessions only. Claude Code deletes transcripts after `cleanupPeriodDays` (30 days unless you set it in `~/.claude/settings.json`), but the windows keep their own copy of the counts.
+  - The tokens come from Claude Code's transcripts in `~/.claude/projects`, of the sessions run on the account. Claude Code deletes transcripts after `cleanupPeriodDays` (30 days unless you set it in `~/.claude/settings.json`), but the windows keep their own copy of the counts.
 - **Pace:**
-  - Overall = used ÷ time since the window opened. Claude session windows are 5 hours and weekly windows are 7 days; ChatGPT/Codex window lengths come from the response.
+  - Overall = used ÷ time since the window opened. The 5-hour window is 5 hours and weekly windows are 7 days.
   - Sensitive = the slope over the last 30 minutes (12 hours for weekly limits).
   - Each falls back to the other when it has no data. Sensitive needs about 15 minutes of samples first (6 hours for weekly limits).
   - Usage only moves in 1% steps, so Sensitive is jumpy at low usage.
@@ -140,7 +128,8 @@ mkdir -p build/previews
 - **Projection:** time to run out = (100 − used) ÷ pace, compared with the reset time.
 
 **Sessions (expanded view):**
-- **Sessions:** the registry files in `~/.claude/sessions/<pid>.json` (name, folder, start time, busy or idle), and in the profile's own configuration folder, for the sessions run on the profile's login (see **Sessions per account**). A file only counts while its process is still running Claude Code.
+- **Sessions:** the registry files in `~/.claude/sessions/<pid>.json` (name, folder, start time, busy or idle). A file only counts while its process is still running Claude Code.
+- **Which account ran a session:** `~/.claude.json` names the account `claude` is signed in to (no credentials are read). Each desktop instance files its record of a session it runs under the account it runs on, `claude-code-sessions/<account>/<organization>/` in its data folder (`~/Library/Application Support/Claude`, `Claude-Work`, …). A session the desktop app ran on another account doesn't count, and neither do its tokens; terminal sessions always count. Windows saved before the app did this lose such sessions at launch. While the account can't be read, every session counts.
 - **Transcripts:** `~/.claude/projects/<folder>/<session>.jsonl`, and the subagent transcripts beside it in `<session>/subagents/`. The app reads only the lines added since the last scan.
 - **Tokens:** each request's input, cache writes, cache reads and output, counted once per request (the transcript repeats a request's usage on every content block).
 - **Tasks:** the TaskCreate and TaskUpdate calls, or the TodoWrite list in sessions that use that.
@@ -189,4 +178,4 @@ swift run AITempomat --render-history history.png
 swift run AITempomat --export-history ~/Desktop
 ```
 
-`--demo` runs with fake data. `--open-panel` opens the panel right after launch. `--render-preview` writes the reduced panel in all four modes to a PNG, and the expanded panel to an `.expanded.png` beside it, each with a `.dark.png` copy. `--print-fleet` prints each CLI profile's Claude Code sessions running now, as its expanded view reads them (run it from the app bundle to use your profiles). `--render-expanded` renders the original profile's expanded panel from live data: your plan usage and its recorded history, and the running sessions. `--render-preview` also writes the History page with fake data to a `.history.png`, and its newest window expanded, in full, to a `.history.window.png`. `--print-history` lists the past 5-hour windows with their prompts and subagents, `--render-history` renders the History page from your data (and its newest window expanded to a `.window.png`), and `--export-history` writes the JSON and CSV export into a folder. These read the saved files and change nothing.
+`--demo` runs with fake data. `--open-panel` opens the panel right after launch. `--render-preview` writes the reduced panel in all four modes to a PNG, and the expanded panel to an `.expanded.png` beside it, each with a `.dark.png` copy. `--print-fleet` prints the Claude Code sessions running now, as the expanded view reads them. `--render-expanded` renders the expanded panel from live data: your plan usage and its recorded history, and the running sessions. `--render-preview` also writes the History page with fake data to a `.history.png`, and its newest window expanded, in full, to a `.history.window.png`. `--print-history` lists the past 5-hour windows with their prompts and subagents, `--render-history` renders the History page from your data (and its newest window expanded to a `.window.png`), and `--export-history` writes the JSON and CSV export into a folder. These read the saved files and change nothing.

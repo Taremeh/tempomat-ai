@@ -11,19 +11,6 @@ actor ClaudeCLISource: UsageSource {
 
     private var resolved: Binary?
     private var resolvedAt = Date.distantPast
-    private let configDirectory: URL?
-    private let desktopDirectory: URL?
-
-    /// A CLI configuration directory selects its own login. A desktop directory only helps
-    /// locate its bundled executable; desktop and terminal logins are separate.
-    init(configDirectory: URL? = nil, desktopDirectory: URL? = nil) {
-        self.configDirectory = configDirectory?.standardizedFileURL
-        self.desktopDirectory = desktopDirectory?.standardizedFileURL
-    }
-
-    private var environmentOverrides: [String: String] {
-        configDirectory.map { ["CLAUDE_CONFIG_DIR": $0.path] } ?? [:]
-    }
 
     func fetch() async throws -> [LimitRow] {
         let binary = try await resolve()
@@ -35,34 +22,24 @@ actor ClaudeCLISource: UsageSource {
             "--setting-sources", "",
             "--strict-mcp-config",
         ]
-        let result = try await ProcessRunner.run(binary.url, arguments, timeout: 45,
-                                                 environmentOverrides: environmentOverrides)
+        let result = try await ProcessRunner.run(binary.url, arguments, timeout: 45)
         do {
             return try UsageReportParser.parse(result.output, cliVersion: binary.versionString)
         } catch UsageError.unsupportedCLI(let version) {
             // No report at all: either the CLI has no plan login, or it predates usage_report.
-            if try await !isSignedInToPlan(binary) { throw notSignedInError }
+            if try await !isSignedInToPlan(binary) { throw UsageError.notSignedIn }
             resolved = nil  // look for a newer binary next time
             if result.status != 0 {
-                // Do not surface arbitrary subprocess output: authentication diagnostics can
-                // contain account details or credentials supplied by the caller.
-                throw UsageError.cliFailed("Claude Code exited with status \(result.status). Check this profile's CLI login.")
+                // Not the CLI's own output: its sign-in diagnostics can hold account details.
+                throw UsageError.cliFailed("Claude Code exited with status \(result.status). Check its login with `claude auth status`.")
             }
             throw UsageError.unsupportedCLI(version: version)
-        } catch UsageError.notSignedIn {
-            throw notSignedInError
         }
-    }
-
-    private var notSignedInError: any Error {
-        guard let configDirectory else { return UsageError.notSignedIn }
-        return ClaudeProfileLoginError(directory: configDirectory)
     }
 
     private func isSignedInToPlan(_ binary: Binary) async throws -> Bool {
         struct Status: Decodable { let loggedIn: Bool; let authMethod: String? }
-        let result = try await ProcessRunner.run(binary.url, ["auth", "status"], timeout: 15,
-                                                 environmentOverrides: environmentOverrides)
+        let result = try await ProcessRunner.run(binary.url, ["auth", "status"], timeout: 15)
         guard let status = try? JSONDecoder().decode(Status.self, from: result.output) else { return true }
         return status.loggedIn && status.authMethod == "claude.ai"
     }
@@ -72,9 +49,8 @@ actor ClaudeCLISource: UsageSource {
         if let resolved, Date().timeIntervalSince(resolvedAt) < 3600 { return resolved }
 
         var best: Binary?
-        for url in Self.candidates(desktopDirectory: desktopDirectory) {
-            guard let result = try? await ProcessRunner.run(url, ["--version"], timeout: 15,
-                                                            environmentOverrides: environmentOverrides),
+        for url in Self.candidates() {
+            guard let result = try? await ProcessRunner.run(url, ["--version"], timeout: 15),
                   result.status == 0 else { continue }
             let text = String(decoding: result.output, as: UTF8.self)
             let versionString = text.split(separator: " ").first.map(String.init)
@@ -89,7 +65,7 @@ actor ClaudeCLISource: UsageSource {
         return best
     }
 
-    private static func candidates(desktopDirectory: URL?) -> [URL] {
+    private static func candidates() -> [URL] {
         let fm = FileManager.default
         if let custom = UserDefaults.standard.string(forKey: "claudePath"), !custom.isEmpty {
             return [URL(fileURLWithPath: (custom as NSString).expandingTildeInPath)]
@@ -100,8 +76,7 @@ actor ClaudeCLISource: UsageSource {
         urls += [".local/bin/claude", ".claude/local/claude", ".npm-global/bin/claude"].map { home.appending(path: $0) }
 
         // The Claude desktop app ships its own copy at claude-code/<version>/<build>/claude.app.
-        let bundled = (desktopDirectory ?? home.appending(path: "Library/Application Support/Claude"))
-            .appending(path: "claude-code")
+        let bundled = home.appending(path: "Library/Application Support/Claude/claude-code")
         for version in (try? fm.contentsOfDirectory(atPath: bundled.path)) ?? [] {
             let versionDir = bundled.appending(path: version)
             for build in (try? fm.contentsOfDirectory(atPath: versionDir.path)) ?? [] {
@@ -109,15 +84,6 @@ actor ClaudeCLISource: UsageSource {
             }
         }
         return urls.filter { fm.isExecutableFile(atPath: $0.path) }
-    }
-}
-
-private struct ClaudeProfileLoginError: LocalizedError {
-    let directory: URL
-
-    var errorDescription: String? {
-        let quoted = "'" + directory.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
-        return "Sign this CLI profile in from Terminal: CLAUDE_CONFIG_DIR=\(quoted) claude auth login"
     }
 }
 
@@ -139,30 +105,26 @@ enum ProcessRunner {
         }
     }
 
-    /// Keep the original default CLI login unless a profile explicitly supplies its own
-    /// configuration directory. Apply overrides after removing inherited provider credentials.
-    static func environment(inheriting inherited: [String: String],
-                            overrides: [String: String] = [:]) -> [String: String] {
+    /// The environment for the CLI: without what a parent Claude Code session exports, so the
+    /// CLI uses its own login, and with a PATH for apps launched from Finder, which get a minimal one.
+    static func environment(inheriting inherited: [String: String]) -> [String: String] {
         var environment = inherited.filter { key, _ in
             key == "CLAUDE_CONFIG_DIR" || !(key.hasPrefix("CLAUDE") || key.hasPrefix("ANTHROPIC_"))
         }
-        environment.merge(overrides) { _, explicit in explicit }
         environment["PATH"] = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
                                environment["PATH"]].compactMap { $0 }.joined(separator: ":")
         return environment
     }
 
     /// Runs a process with stdout and stderr merged, killing it after `timeout` seconds.
-    static func run(_ executable: URL, _ arguments: [String], timeout: TimeInterval,
-                    environmentOverrides: [String: String] = [:]) async throws -> Result {
+    static func run(_ executable: URL, _ arguments: [String], timeout: TimeInterval) async throws -> Result {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 let process = Process()
                 process.executableURL = executable
                 process.arguments = arguments
                 process.currentDirectoryURL = FileManager.default.temporaryDirectory
-                process.environment = environment(inheriting: ProcessInfo.processInfo.environment,
-                                                  overrides: environmentOverrides)
+                process.environment = environment(inheriting: ProcessInfo.processInfo.environment)
 
                 let pipe = Pipe()
                 process.standardOutput = pipe
@@ -182,7 +144,7 @@ enum ProcessRunner {
                     if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
                 }
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
-                // A subprocess may ignore SIGTERM; it still must not block later profile polls.
+                // A subprocess may ignore SIGTERM; it still must not block later polls.
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout + 1, execute: forceKiller)
                 let output = pipe.fileHandleForReading.readDataToEndOfFile()
                 process.waitUntilExit()

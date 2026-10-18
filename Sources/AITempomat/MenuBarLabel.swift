@@ -3,8 +3,6 @@ import SwiftUI
 
 struct MenuBarLabel: View {
     let store: UsageStore
-    var showsGauge = true
-    var compact = false
     @AppStorage(SettingsKey.mode) private var mode = DisplayMode.relative
     @AppStorage(SettingsKey.amount) private var amount = AmountShown.left
     @AppStorage(SettingsKey.paceMethod) private var paceMethod = PaceMethod.sensitive
@@ -15,22 +13,21 @@ struct MenuBarLabel: View {
             let reading = mode == .total
                 ? DialReading.total(meter: meter, pace: pace, shown: amount)
                 : DialReading.relative(meter: meter, pace: pace)
-            if showsGauge { Image(nsImage: GaugeIcon.image(
+            Image(nsImage: GaugeIcon.image(
                 fraction: reading.value.map { $0 / reading.scale },
                 zone: reading.zone.map { ($0.lowerBound / reading.scale, $0.upperBound / reading.scale) }))
-                .renderingMode(.template) }
+                .renderingMode(.template)
             Text(text(meter: meter, pace: pace, reading: reading))
         } else {
-            if showsGauge { Image(nsImage: GaugeIcon.image(fraction: nil, zone: nil))
+            Image(nsImage: GaugeIcon.image(fraction: nil, zone: nil))
                 .renderingMode(.template)
-            } else { Text("—") }
         }
     }
 
     /// "38% left", "62% used" or "123% pace", plus the run-out time when it comes before the reset.
     private func text(meter: Meter, pace: Pace, reading: DialReading) -> String {
         let main = mode == .total ? "\(reading.reading) \(amount.rawValue)" : "\(reading.reading) pace"
-        return compact ? main : (pace.limitAt.map { "\(main) · \(Format.clock($0))" } ?? main)
+        return pace.limitAt.map { "\(main) · \(Format.clock($0))" } ?? main
     }
 }
 

@@ -7,13 +7,6 @@ struct AITempomatApp: App {
 
     init() {
         let arguments = CommandLine.arguments
-        if let index = arguments.firstIndex(of: "--render-profiles"), index + 1 < arguments.count {
-            PreviewRenderer.renderProfiles(to: URL(fileURLWithPath: arguments[index + 1]))
-            exit(0)
-        }
-        if arguments.contains("--print-profiles") {
-            Self.printProfiles()
-        }
         if let index = arguments.firstIndex(of: "--render-preview"), index + 1 < arguments.count {
             PreviewRenderer.render(to: URL(fileURLWithPath: arguments[index + 1]))
             exit(0)
@@ -38,73 +31,52 @@ struct AITempomatApp: App {
         }
 
         let isDemo = arguments.contains("--demo")
-        let profiles = ProfilesStore(demo: isDemo)
-        profiles.start()
-        AppDelegate.model = profiles
+        let store = isDemo
+            ? UsageStore(source: DemoSource(), history: DemoSource.history(), archive: DemoSource.archive(), persist: false)
+            : UsageStore(source: ClaudeCLISource(), persist: true, transcripts: .standard)
+        store.start()
+        let fleet = isDemo
+            ? FleetStore(scanner: nil, sessions: DemoFleet.sessions())
+            : FleetStore(scanner: FleetScanner())
+        // The first scan reads every transcript in full; do it now so the Agents page opens ready.
+        Task { await fleet.refresh() }
+        AppDelegate.model = (store, fleet)
     }
 
     /// Scans the running Claude Code sessions once, prints what the Agents view would show, and exits.
-    private static func printProfiles() -> Never {
-        Task { @MainActor in
-            let profiles = ProfilesStore(persist: false)
-            for runtime in profiles.profiles {
-                await runtime.store.refresh()
-                print("\(runtime.profile.name) [\(runtime.profile.provider.title)]")
-                if let problem = runtime.store.problem { print("  \(problem.title): \(problem.detail)") }
-                for meter in runtime.store.meters {
-                    print("  \(meter.title): \(Format.percent(meter.percent)) used; resets \(meter.resetsAt.map { Format.clock($0) } ?? "unknown")")
-                }
-            }
-            exit(0)
-        }
-        RunLoop.main.run()
-        exit(0)
-    }
-
-    /// Scans each profile's running Claude Code sessions once, prints what its Agents view would
-    /// show, and exits.
     private static func printFleet() -> Never {
         Task { @MainActor in
             let started = Date()
-            var count = 0
-            for runtime in ProfilesStore(persist: false).profiles where runtime.supportsSessions {
-                await runtime.fleet.refresh()
-                print("\(runtime.profile.name) [\(runtime.profile.path)]: \(counted(runtime.fleet.sessions.count, "session")) running")
-                printSessions(of: runtime.fleet)
-                count += runtime.fleet.sessions.count
+            let fleet = FleetStore(scanner: FleetScanner())
+            await fleet.refresh()
+            let now = fleet.lastUpdated ?? Date()
+            for session in fleet.sessions {
+                let state = session.isBusy ? "busy" : "idle"
+                print("\(session.isBusy ? "●" : "○") \(session.name) [\(session.project), \(state) \(Format.duration(now.timeIntervalSince(session.statusSince))),"
+                      + " open \(Format.duration(now.timeIntervalSince(session.startedAt)))]")
+                print("  tasks \(session.tasks.done)/\(session.tasks.total) · subagents \(session.runningAgents.count)/\(session.agents.count)"
+                      + " · workflows \(session.workflowsRunning) running, \(session.workflowsDone) done")
+                print("  \(Format.tokens(session.totalTokens)) tokens (\(Format.tokens(session.outputTokens)) out) in \(session.requests.count) requests"
+                      + " · context \(Format.tokens(session.context)) · \(session.turns.count) turns · \(session.completions.count) tasks finished")
+                if let last = session.turns.last {
+                    print("  last turn \(Format.clock(last.start))–\(Format.clock(last.end))")
+                }
+                for agent in session.runningAgents { print("    ↳ \(agent.label)") }
             }
-            print("scanned \(count) sessions in \(String(format: "%.2f", Date().timeIntervalSince(started))) s")
+            print("scanned \(fleet.sessions.count) sessions in \(String(format: "%.2f", Date().timeIntervalSince(started))) s")
             exit(0)
         }
         RunLoop.main.run()
         exit(0)
     }
 
-    private static func printSessions(of fleet: FleetStore) {
-        let now = fleet.lastUpdated ?? Date()
-        for session in fleet.sessions {
-            let state = session.isBusy ? "busy" : "idle"
-            print("\(session.isBusy ? "●" : "○") \(session.name) [\(session.project), \(state) \(Format.duration(now.timeIntervalSince(session.statusSince))),"
-                  + " open \(Format.duration(now.timeIntervalSince(session.startedAt)))]")
-            print("  tasks \(session.tasks.done)/\(session.tasks.total) · subagents \(session.runningAgents.count)/\(session.agents.count)"
-                  + " · workflows \(session.workflowsRunning) running, \(session.workflowsDone) done")
-            print("  \(Format.tokens(session.totalTokens)) tokens (\(Format.tokens(session.outputTokens)) out) in \(session.requests.count) requests"
-                  + " · context \(Format.tokens(session.context)) · \(session.turns.count) turns · \(session.completions.count) tasks finished")
-            if let last = session.turns.last {
-                print("  last turn \(Format.clock(last.start))–\(Format.clock(last.end))")
-            }
-            for agent in session.runningAgents { print("    ↳ \(agent.label)") }
-        }
-    }
-
-    /// A store with the original profile's saved readings and past windows that saves nothing,
-    /// and so leaves the running app's files alone, with the windows missed estimated from the
-    /// transcripts.
+    /// A store with the saved readings and past windows that saves nothing, and so leaves the
+    /// running app's files alone, with the windows missed estimated from the transcripts.
     static func savedStore(estimating: Bool = true) async -> UsageStore {
         let store = UsageStore(source: ClaudeCLISource(),
                                history: UsageStore.load(History.self, from: UsageStore.historyFile, keepUnreadable: false),
                                archive: UsageStore.load(WindowArchive.self, from: UsageStore.archiveFile, keepUnreadable: false),
-                               persist: false, transcripts: UsageProfile.originalCLI.sessionScope)
+                               persist: false, transcripts: .standard)
         if estimating { await store.estimateMissedWindows() }
         return store
     }
@@ -188,12 +160,12 @@ struct AITempomatApp: App {
 /// Puts the menu bar item up once the app has launched.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    static var model: ProfilesStore?
+    static var model: (store: UsageStore, fleet: FleetStore)?
     private var statusPanel: StatusPanelController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let model = Self.model else { return }
-        statusPanel = StatusPanelController(profiles: model)
+        statusPanel = StatusPanelController(store: model.store, fleet: model.fleet)
         // For development: open the panel right away.
         if CommandLine.arguments.contains("--open-panel") { statusPanel?.show() }
     }
@@ -203,33 +175,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// for checking the layout.
 @MainActor
 enum PreviewRenderer {
-    static func renderProfiles(to url: URL) {
-        let profiles = ProfilesStore(demo: true)
-        let defaults = UserDefaults(suiteName: "AITempomat.preview.profiles")!
-        defaults.set(DisplayMode.total.rawValue, forKey: SettingsKey.mode)
-        defaults.set(AmountShown.left.rawValue, forKey: SettingsKey.amount)
-        let content = HStack(alignment: .top, spacing: 16) {
-            VStack(spacing: 0) {
-                // Mock of the menu bar item.
-                SelectedProfileLabel(profiles: profiles)
-                    .font(.system(size: 13)).padding(10)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                ProfilePanelView(profiles: profiles)
-            }
-            ProfileSettingsView(profiles: profiles)
-        }
-        .defaultAppStorage(defaults)
-        for scheme in [ColorScheme.light, .dark] {
-            write(content, scheme: scheme, to: url, hosted: true)
-        }
-    }
-
-    /// Renders the original profile's expanded panel (or another page) from live data, light and
-    /// dark, and exits: the plan usage and its recorded history, and the sessions running now.
-    /// Saves nothing.
+    /// Renders the expanded panel (or another page) from live data, light and dark, and exits:
+    /// the plan usage and its recorded history, and the sessions running now. Saves nothing.
     static func renderLive(to url: URL, page: PanelPage = .tempomat) -> Never {
         Task { @MainActor in
-            let fleet = FleetStore(scanner: UsageProfile.originalCLI.sessionScope.map { FleetScanner(scope: $0) })
+            let fleet = FleetStore(scanner: FleetScanner())
             await fleet.refresh()
             let store = await AITempomatApp.savedStore(estimating: page == .history)
             await store.refresh()

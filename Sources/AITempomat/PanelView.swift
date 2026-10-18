@@ -9,50 +9,40 @@ enum PanelPage {
 struct PanelView: View {
     let store: UsageStore
     let fleet: FleetStore
-    let profiles: ProfilesStore?
-    private var supportsSessions: Bool { profiles?.selected.supportsSessions ?? true }
     @State private var page: PanelPage
     @AppStorage(SettingsKey.panelLayout) private var layout = PanelLayout.reduced
     @AppStorage(SettingsKey.mode) private var mode = DisplayMode.relative
     @AppStorage(SettingsKey.amount) private var amount = AmountShown.left
     @AppStorage(SettingsKey.paceMethod) private var paceMethod = PaceMethod.sensitive
 
-    init(store: UsageStore, fleet: FleetStore, page: PanelPage = .tempomat, profiles: ProfilesStore? = nil) {
+    init(store: UsageStore, fleet: FleetStore, page: PanelPage = .tempomat) {
         self.store = store
         self.fleet = fleet
-        self.profiles = profiles
         _page = State(initialValue: page)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if let profiles, profiles.visibleProfiles.count > 1 { ProfileSwitcher(profiles: profiles) }
             switch page {
             case .tempomat:
                 header
-                switch supportsSessions ? layout : .reduced {
+                switch layout {
                 case .reduced: tempomat
                 case .expanded: expanded
                 }
             case .history:
-                if supportsSessions {
-                    HistoryHeader(store: store) { show(.tempomat) }
-                    HistoryPage(store: store, fleet: fleet)
-                } else {
-                    Button { show(.tempomat) } label: { Label("Back to usage", systemImage: "chevron.left") }
-                        .buttonStyle(.plain).font(.caption)
-                    ProfileUsageHistory(store: store)
-                }
+                HistoryHeader(store: store) { show(.tempomat) }
+                HistoryPage(store: store, fleet: fleet)
             }
 
             Divider()
             footer
         }
         .padding(16)
-        .frame(width: supportsSessions ? (page == .history ? HistoryPage.width : layout.width) : PanelLayout.reduced.width)
+        .frame(width: page == .history ? HistoryPage.width : layout.width)
         // Hover cards draw here, above every column.
         .hoverCardLayer()
-        .onAppear { store.refreshIfStale(); store.refreshLoginStatus() }
+        .onAppear { store.refreshIfStale() }
         // The panel opens on the tempomat.
         .onDisappear { page = .tempomat }
     }
@@ -86,9 +76,6 @@ struct PanelView: View {
 
         if let problem = store.problem {
             ProblemBanner(problem: problem)
-            if let profiles, profiles.selected.profile.provider == .claudeDesktop {
-                ProfileConnectionButton(runtime: profiles.selected)
-            }
         }
 
         if let headline = store.headline {
@@ -100,29 +87,17 @@ struct PanelView: View {
                 .frame(maxWidth: .infinity, minHeight: 120)
         }
 
-        if supportsSessions { TokenBudgetView(store: store, fleet: fleet) }
+        TokenBudgetView(store: store, fleet: fleet)
 
         let others = store.meters.filter { $0.id != store.headline?.id }
         if !others.isEmpty {
             Divider()
-            if others.count > 3 {
-                ScrollView {
-                    secondaryMeters(others)
-                        .padding(.trailing, 6)
-                }
-                .frame(height: 180)
-            } else {
-                secondaryMeters(others)
-            }
-        }
-    }
-
-    private func secondaryMeters(_ meters: [Meter]) -> some View {
-        VStack(spacing: 12) {
-            ForEach(meters) { meter in
-                MeterRow(meter: meter, pace: store.pace(for: meter, method: paceMethod), mode: mode, amount: amount) {
-                    withAnimation(.snappy(duration: 0.25)) { store.showOnGauge(meter) }
+            VStack(spacing: 12) {
+                ForEach(others) { meter in
+                    MeterRow(meter: meter, pace: store.pace(for: meter, method: paceMethod), mode: mode, amount: amount) {
+                        withAnimation(.snappy(duration: 0.25)) { store.showOnGauge(meter) }
                     }
+                }
             }
         }
     }
@@ -157,8 +132,7 @@ struct PanelView: View {
             }
             .buttonStyle(.plain)
             .padding(.leading, 4)
-            .help("Usage history for this profile")
-            if supportsSessions {
+            .help("History: past 5-hour windows and how much of each you used")
             Button {
                 withAnimation(.snappy(duration: 0.25)) { layout = layout == .reduced ? .expanded : .reduced }
             } label: {
@@ -168,7 +142,6 @@ struct PanelView: View {
             .padding(.leading, 4)
             .help(layout == .reduced ? "Expand: history, running sessions and the outlook beside the tempomat"
                                      : "Reduce to the tempomat")
-            }
         }
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -192,11 +165,6 @@ struct PanelView: View {
 
     private var footer: some View {
         HStack {
-            if let profiles {
-                Button { profiles.isShowingSettings = true } label: { Image(systemName: "gearshape") }
-                    .help("Manage profiles and menu bar visibility")
-                    .accessibilityLabel("Profile settings")
-            }
             Button {
                 store.setOpensAtLogin(!store.opensAtLogin)
             } label: {

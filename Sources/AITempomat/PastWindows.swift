@@ -278,7 +278,7 @@ extension SessionRequests {
 }
 
 extension FleetScanner {
-    /// What the profile's sessions did since `start`, from the transcripts written since then,
+    /// What the sessions that count did since `start`, from the transcripts written since then,
     /// ended sessions included. Parses only the lines past windows need (see `carriesHistory`),
     /// so going over months of transcripts takes seconds rather than minutes.
     static func sessionRequests(in scope: SessionScope, since start: Date) -> [SessionRequests] {
