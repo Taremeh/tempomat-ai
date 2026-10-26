@@ -21,7 +21,8 @@ struct LimitRow: Decodable, Sendable {
 enum UsageError: Error {
     case cliNotFound
     case unsupportedCLI(version: String?)
-    case notSignedIn
+    /// Not signed in to a Claude plan; `claude` is the binary that said so, when known.
+    case notSignedIn(claude: URL?)
     case noMeters
     case cliFailed(String)
     case timedOut
@@ -50,7 +51,7 @@ enum UsageReportParser {
                 throw UsageError.cliFailed("Unexpected usage report format: \(error.localizedDescription)")
             }
             // rate_limits is null when the CLI has no plan login (or a token without the profile scope).
-            guard let rateLimits = envelope.usageReport?.rateLimits else { throw UsageError.notSignedIn }
+            guard let rateLimits = envelope.usageReport?.rateLimits else { throw UsageError.notSignedIn(claude: nil) }
             guard let limits = rateLimits.limits, !limits.isEmpty else { throw UsageError.noMeters }
             return limits
         }

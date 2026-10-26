@@ -71,15 +71,39 @@ So use the room when there's work waiting that's worth doing, and let the window
 
 ## Install
 
-You need macOS 14 or later, the Xcode command line tools, and Claude Code 2.1.29x or later.
+Paste this into Terminal:
 
-The app reads usage by running `claude -p "/usage"`. This is a local command, so it never calls the model and costs no quota. The terminal CLI needs its own login, because the desktop app's login isn't shared with it. Run this once:
+```bash
+curl -fsSL https://raw.githubusercontent.com/Taremeh/tempomat-ai/main/scripts/install.sh | sh
+```
+
+Then click the gauge in the menu bar to open the panel, and click **Sign in**. Your browser opens claude.com: approve there, and the panel shows your limits.
+
+You need macOS 14 or later; building it takes Apple's Swift 6 tools, which need macOS 14.5 or later. The script installs Apple's command line tools if they're missing (macOS asks first), clones this repository into `~/tempomat-ai`, builds the app, puts it in `~/Applications` and starts it. If Claude Code isn't installed, the panel offers **Install Claude Code**, which runs Anthropic's installer in a Terminal window. The app needs Claude Code 2.1.29x or later.
+
+Keep the clone: the app's **Update** button pulls and builds there (see [Updating](#updating)), and running the script again does the same. To clone somewhere else, set `TEMPOMAT_DIR`. A folder outside Documents and Desktop spares you a macOS prompt on updates:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Taremeh/tempomat-ai/main/scripts/install.sh | TEMPOMAT_DIR=~/src/tempomat-ai sh
+```
+
+The script never deletes or overwrites a folder of yours: if that folder is already there and isn't a clone of this repository, it stops and says so. Like `./scripts/build-app.sh --install`, it does replace `~/Applications/AI Tempomat.app`. To read it first, see [`scripts/install.sh`](scripts/install.sh).
+
+### Signing in
+
+The app reads usage by running `claude -p "/usage"`. This is a local command, so it never calls the model and costs no quota. It needs Claude Code signed in to your Claude plan, and the desktop app's login isn't shared with the terminal CLI. Until the CLI is signed in, the panel says so and offers **Sign in**.
+
+**Sign in** runs `claude auth login --claudeai` for you, which opens claude.com in your browser. Approve there, and the panel shows your limits a moment later. If the browser didn't open, the panel links to the sign-in page. If the CLI is signed in with a Console account (API billing), the panel offers Sign in too. Signing in replaces that Console login with your Claude plan's login, for `claude` in Terminal as well.
+
+You can also sign in from Terminal instead (if `claude` isn't found there, the panel shows the full path of the copy it uses):
 
 ```bash
 claude auth login
 ```
 
-Then clone, build, install and launch the app:
+### Install by hand
+
+If you'd rather run each step yourself, install the Xcode command line tools (`xcode-select --install`), then clone, build, install and launch the app:
 
 ```bash
 git clone https://github.com/Taremeh/tempomat-ai.git
@@ -87,7 +111,9 @@ cd tempomat-ai
 ./scripts/build-app.sh --install
 ```
 
-Check that the CLI side works without the UI:
+Then sign in from the panel, or with `claude auth login`, as above.
+
+In the clone (`~/tempomat-ai` if the script made it), check that the CLI side works without the UI:
 
 ```bash
 .build/release/AITempomat --print-usage
@@ -101,7 +127,7 @@ Run the tests:
 
 ### Which account it follows
 
-It follows one account: the one `claude` is signed in to (`claude auth status` names it). Sign `claude` in to another account and the app follows it, though its history doesn't tell the two apart. The sessions it counts are the ones run on that account. A second desktop instance signed in to another account (such as `Claude-Work`, started with `--user-data-dir`) keeps its sessions in `~/.claude` too, and the app leaves those out (see **Which account ran a session** under [How it works](#reference)).
+It follows one account: the one `claude` is signed in to (`claude auth status` names it). Sign `claude` in to another account (`claude auth login`) and the app follows it, though its history doesn't tell the two apart. The sessions it counts are the ones run on that account. A second desktop instance signed in to another account (such as `Claude-Work`, started with `--user-data-dir`) keeps its sessions in `~/.claude` too, and the app leaves those out (see **Which account ran a session** under [How it works](#reference)).
 
 For several accounts side by side, Claude desktop logins and ChatGPT/Codex, build the [`multi-profile`](https://github.com/Taremeh/tempomat-ai/tree/multi-profile) branch instead. Both are the same app (`local.ai-tempomat`), so installing one replaces the other, and they share this account's history and settings.
 
@@ -273,6 +299,8 @@ The clock icon at the top right opens the History page: every 5-hour window, pas
 
 - **Data:** the `usage_report.rate_limits.limits[]` rows from `/usage` (stream-json output). The report is marked experimental, so its shape may change. Supported since Claude Code 2.1.29x.
 - **CLI:** the app uses the newest `claude` binary it can find, including the copy bundled with the Claude desktop app.
+- **Sign in:** runs `claude auth login --claudeai` with that binary, without Terminal. The CLI opens claude.com in your browser and finishes by itself once you approve. The app doesn't log or keep what the CLI prints: it only picks out the sign-in link, for when the browser didn't open. **Cancel** stops the sign-in, and it gives up after 10 minutes.
+- **Install Claude Code:** writes a short script to `~/Library/Caches/AI Tempomat/install-claude-code.command` and opens it in Terminal. That script downloads Anthropic's installer from `https://claude.ai/install.sh` and runs it, which puts `claude` in `~/.local/bin`, and says whether that worked. The app looks for it every 5 seconds for up to 10 minutes (**Cancel** stops looking), and then offers Sign in.
 - **Polling:** every 2 minutes, plus a refresh whenever you open the panel.
 - **Where the data is kept:** in `~/Library/Application Support/AI Tempomat/`. macOS doesn't clear this folder, and Time Machine backs it up.
   - `history.json` holds the readings of the windows still open.

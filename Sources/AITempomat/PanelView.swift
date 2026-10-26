@@ -80,7 +80,7 @@ struct PanelView: View {
         controls
 
         if let problem = store.problem {
-            ProblemBanner(problem: problem)
+            ProblemBanner(problem: problem, store: store)
         }
 
         if let headline = store.headline {
@@ -449,8 +449,12 @@ struct UsageBar: View {
     }
 }
 
+/// What keeps the app from reading usage, and the command that fixes it. When the app can fix it
+/// itself, Sign in or Install Claude Code comes first, and the command stays as the way by hand.
 private struct ProblemBanner: View {
     let problem: UsageProblem
+    let store: UsageStore
+    var setup: ClaudeSetup = .shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -461,28 +465,63 @@ private struct ProblemBanner: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let command = problem.command {
-                HStack {
-                    Text(command)
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(command, forType: .string)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                    }
-                    .buttonStyle(.plain)
-                    .help("Copy")
-                }
-                .padding(8)
-                .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+            if let action = problem.action {
+                ClaudeSetupActions(action: action, command: problem.command, setup: setup, refresh: refreshed)
+            } else if let command = problem.command {
+                ProblemCommand(command: command)
             }
         }
         .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Reads usage again, after a refresh already under way (it may have started before the CLI
+    /// changed), and returns the problem that's left.
+    private func refreshed() async -> UsageProblem? {
+        // A cancelled sleep returns at once, so a cancelled sign-in must not keep looping here.
+        while store.isRefreshing, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(200)) }
+        await store.refresh()
+        return store.problem
+    }
+}
+
+/// A command in a box, with a button that copies it. Too long for one line, it takes two, broken
+/// at a space rather than inside a path or URL, so the installer's URL shows in full.
+struct ProblemCommand: View {
+    let command: String
+
+    var body: some View {
+        HStack {
+            ViewThatFits(in: .horizontal) {
+                ForEach(Self.layouts(of: command), id: \.self) { text in
+                    Text(text)
+                        .fixedSize()
+                }
+                Text(command)
+                    .lineLimit(3)
+                    .truncationMode(.middle)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .font(.system(.caption, design: .monospaced))
+            .textSelection(.enabled)
+            Spacer()
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(command, forType: .string)
+            } label: {
+                Image(systemName: "doc.on.doc")
+            }
+            .buttonStyle(.plain)
+            .help("Copy")
+        }
+        .padding(8)
+        .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// The command on one line, then on two, broken at the last space first.
+    static func layouts(of command: String) -> [String] {
+        let spaces = command.indices.filter { command[$0] == " " }
+        return [command] + spaces.reversed().map { command.replacingCharacters(in: $0...$0, with: "\n") }
     }
 }

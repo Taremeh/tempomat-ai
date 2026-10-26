@@ -7,9 +7,7 @@ protocol UsageSource: Sendable {
 
 /// Reads plan usage by running `claude -p "/usage"`, which never calls the model and costs no quota.
 actor ClaudeCLISource: UsageSource {
-    private struct Binary { let url: URL; let version: [Int]; let versionString: String? }
-
-    private var resolved: Binary?
+    private var resolved: ClaudeBinary?
     private var resolvedAt = Date.distantPast
 
     func fetch() async throws -> [LimitRow] {
@@ -25,9 +23,11 @@ actor ClaudeCLISource: UsageSource {
         let result = try await ProcessRunner.run(binary.url, arguments, timeout: 45)
         do {
             return try UsageReportParser.parse(result.output, cliVersion: binary.versionString)
+        } catch UsageError.notSignedIn {
+            throw UsageError.notSignedIn(claude: binary.url)
         } catch UsageError.unsupportedCLI(let version) {
             // No report at all: either the CLI has no plan login, or it predates usage_report.
-            if try await !isSignedInToPlan(binary) { throw UsageError.notSignedIn }
+            if try await !isSignedInToPlan(binary) { throw UsageError.notSignedIn(claude: binary.url) }
             resolved = nil  // look for a newer binary next time
             if result.status != 0 {
                 // Not the CLI's own output: its sign-in diagnostics can hold account details.
@@ -37,7 +37,7 @@ actor ClaudeCLISource: UsageSource {
         }
     }
 
-    private func isSignedInToPlan(_ binary: Binary) async throws -> Bool {
+    private func isSignedInToPlan(_ binary: ClaudeBinary) async throws -> Bool {
         struct Status: Decodable { let loggedIn: Bool; let authMethod: String? }
         let result = try await ProcessRunner.run(binary.url, ["auth", "status"], timeout: 15)
         guard let status = try? JSONDecoder().decode(Status.self, from: result.output) else { return true }
@@ -45,30 +45,46 @@ actor ClaudeCLISource: UsageSource {
     }
 
     /// Finds the newest `claude` binary, re-checking hourly so updates are picked up.
-    private func resolve() async throws -> Binary {
+    private func resolve() async throws -> ClaudeBinary {
         if let resolved, Date().timeIntervalSince(resolvedAt) < 3600 { return resolved }
+        guard let best = await ClaudeBinary.newest() else { throw UsageError.cliNotFound }
+        resolved = best
+        resolvedAt = Date()
+        return best
+    }
+}
 
-        var best: Binary?
-        for url in Self.candidates() {
+/// A `claude` binary and the version it reports. The usage check and Sign in both run the one
+/// `newest()` finds.
+struct ClaudeBinary: Sendable {
+    let url: URL
+    let version: [Int]
+    let versionString: String?
+
+    /// The newest of the candidates that runs, or nil when none does.
+    static func newest(among candidates: [URL] = candidates()) async -> ClaudeBinary? {
+        var best: ClaudeBinary?
+        for url in candidates {
             guard let result = try? await ProcessRunner.run(url, ["--version"], timeout: 15),
                   result.status == 0 else { continue }
             let text = String(decoding: result.output, as: UTF8.self)
             let versionString = text.split(separator: " ").first.map(String.init)
             let version = versionString?.split(separator: ".").compactMap { Int($0) } ?? []
             if best.map({ $0.version.lexicographicallyPrecedes(version) }) ?? true {
-                best = Binary(url: url, version: version, versionString: versionString)
+                best = ClaudeBinary(url: url, version: version, versionString: versionString)
             }
         }
-        guard let best else { throw UsageError.cliNotFound }
-        resolved = best
-        resolvedAt = Date()
         return best
     }
 
-    private static func candidates() -> [URL] {
+    /// The binary set in the claudePath setting, else those in the usual places and the desktop
+    /// app's own copies. A setting whose binary is gone is passed over, so a fresh install (Install
+    /// Claude Code) is still found.
+    static func candidates() -> [URL] {
         let fm = FileManager.default
         if let custom = UserDefaults.standard.string(forKey: "claudePath"), !custom.isEmpty {
-            return [URL(fileURLWithPath: (custom as NSString).expandingTildeInPath)]
+            let url = URL(fileURLWithPath: (custom as NSString).expandingTildeInPath)
+            if fm.isExecutableFile(atPath: url.path) { return [url] }
         }
 
         let home = fm.homeDirectoryForCurrentUser

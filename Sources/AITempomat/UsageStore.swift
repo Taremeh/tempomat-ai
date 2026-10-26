@@ -4,24 +4,35 @@ import ServiceManagement
 
 /// A problem worth showing in the panel, with an optional command to fix it.
 struct UsageProblem: Equatable {
+    /// What the panel can do about a problem itself, with a button: sign Claude Code in, or install it.
+    enum Action: Equatable {
+        case signIn, installCLI
+    }
+
     let title: String
     let detail: String
     var command: String?
+    /// The button the panel offers; the command stays as the way to do it in Terminal.
+    var action: Action?
 
     init(_ error: Error) {
         switch error as? UsageError {
         case .cliNotFound:
             title = "Claude Code CLI not found"
-            detail = "Install Claude Code, or point the app at your claude binary:"
+            detail = "AI Tempomat reads your limits through the Claude Code CLI. Install it with Anthropic's installer, "
+                + "which runs in Terminal."
             command = "defaults write \(Bundle.main.bundleIdentifier ?? "AITempomat") claudePath /path/to/claude"
+            action = .installCLI
         case .unsupportedCLI(let version):
             title = "Update Claude Code"
             detail = "Claude Code \(version ?? "(unknown version)") doesn't return a usage report. Update it:"
             command = "claude update"
-        case .notSignedIn:
-            title = "Sign the CLI in to your plan"
-            detail = "The desktop app's login isn't shared with the terminal CLI. Run this once in Terminal:"
-            command = "claude auth login"
+        case .notSignedIn(let claude):
+            title = "Sign Claude Code in to your plan"
+            detail = "Claude Code on this Mac isn't signed in to your Claude plan; the desktop app's login isn't shared "
+                + "with it. Sign in opens claude.com in your browser, and replaces a Console (API) login if Claude Code has one."
+            command = Self.command(claude, "auth login")
+            action = .signIn
         case .noMeters:
             title = "No plan limits reported"
             detail = "Your account didn't report any usage limits. API-key and gateway logins have none."
@@ -35,6 +46,16 @@ struct UsageProblem: Equatable {
             title = "Couldn't read usage"
             detail = error.localizedDescription
         }
+    }
+
+    /// `arguments` for the claude binary at `url`, as you'd type it in Terminal: `claude` where
+    /// Terminal finds it by name, else its full path, quoted (the desktop app's own copy, or one
+    /// just installed into ~/.local/bin before that's on your PATH).
+    static func command(_ url: URL?, _ arguments: String) -> String {
+        guard let path = url?.path, !["/opt/homebrew/bin/claude", "/usr/local/bin/claude"].contains(path) else {
+            return "claude \(arguments)"
+        }
+        return "'\(path.replacingOccurrences(of: "'", with: "'\\''"))' \(arguments)"
     }
 }
 

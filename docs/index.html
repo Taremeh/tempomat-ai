@@ -166,6 +166,8 @@
   pre .c { color: var(--muted); }
   .code { position: relative; }
   .code pre { padding-right: 84px; }
+  /* The one-liner wraps rather than scrolls. Copy still copies it as one line. */
+  #install-cmds { white-space: pre-wrap; overflow-wrap: anywhere; }
   .copy { position: absolute; top: 10px; right: 10px; font: 500 13px var(--sans); color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 5px 11px; cursor: pointer; }
   .copy:hover { border-color: var(--muted); }
   @media (max-width: 800px) { .end .wrap { grid-template-columns: minmax(0, 1fr); gap: 40px; } }
@@ -270,15 +272,14 @@
       </div>
       <div id="install">
         <h2>Try it</h2>
-        <p>You need macOS 14 and Claude Code 2.1.29x or newer.</p>
+        <p>You need macOS 14 or newer. Paste this into Terminal:</p>
 <div class="code">
-<pre id="install-cmds"><span class="c"># once: the CLI needs its own login</span>
-claude auth login
-git clone https://github.com/Taremeh/tempomat-ai.git
-cd tempomat-ai && ./scripts/build-app.sh --install</pre>
+<pre id="install-cmds"><span class="c"># clones and builds it in ~/tempomat-ai</span>
+curl -fsSL https://raw.githubusercontent.com/Taremeh/tempomat-ai/main/scripts/install.sh | sh</pre>
           <button class="copy" type="button" id="copy-install">Copy</button>
         </div>
-        <p>The script builds the app, puts it in <code>~/Applications</code> and starts it. When a new version is out, the panel can update it for you. Ideas and bug reports are welcome <a href="https://github.com/Taremeh/tempomat-ai">on GitHub</a>.</p>
+        <p>Then click the gauge in the menu bar and click <b>Sign in</b> in the panel. Your browser opens claude.com: approve there, and the panel shows your limits. If Claude Code isn't installed yet, the panel offers to install it first.</p>
+        <p>The script installs Apple's command line tools if they're missing, builds the app, puts it in <code>~/Applications</code> and starts it. When a new version is out, the panel can update it for you. Ideas and bug reports are welcome <a href="https://github.com/Taremeh/tempomat-ai">on GitHub</a>.</p>
       </div>
     </div>
   </section>
