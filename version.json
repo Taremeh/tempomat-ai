@@ -1,7 +1,7 @@
 {
-  "version": "0.2",
-  "build": 2,
-  "notes": "",
-  "url": "https://github.com/Taremeh/tempomat-ai/commits/main",
+  "version": "0.3",
+  "build": 3,
+  "notes": "The panel is easier to read over dark windows.",
+  "url": "https://github.com/Taremeh/tempomat-ai/releases/tag/v0.3",
   "checkURL": "https://tempomat-ai.taremeh.workers.dev/v1/check"
 }

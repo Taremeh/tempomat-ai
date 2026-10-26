@@ -9,6 +9,8 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let panel = StatusPanel()
     private let background = NSVisualEffectView()
+    /// Over the blur, so text stays readable when a dark window is behind the panel.
+    private let tint = PanelTint()
     private let content: SizingHostingView<AnyView>
     private let label: SizingHostingView<AnyView>
     private let contentSize = SizeReport()
@@ -49,6 +51,11 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         background.state = .active
         background.maskImage = Self.roundedMask(radius: Self.cornerRadius)
         panel.contentView = background
+        // Under the content, which show() adds on top.
+        tint.frame = background.bounds
+        tint.autoresizingMask = [.width, .height]
+        tint.cornerRadius = Self.cornerRadius
+        background.addSubview(tint)
         panel.delegate = self
         panel.onCancel = { [weak self] in self?.close() }
 
@@ -167,6 +174,46 @@ final class StatusPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 
     override func cancelOperation(_ sender: Any?) { onCancel?() }
+}
+
+/// The panel's color over its blur: the light or dark panel background, mostly opaque. The
+/// popover material alone lets a dark window behind show through enough to wash out the text;
+/// this keeps a hint of the desktop and the text readable over anything.
+final class PanelTint: NSView {
+    static let color = NSColor(name: "AITempomatPanelTint") { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(white: 0.15, alpha: 0.9)
+            : NSColor(white: 0.97, alpha: 0.9)
+    }
+
+    /// The panel's own, so the color stops where the blur does.
+    var cornerRadius: CGFloat = 0 {
+        didSet { needsDisplay = true }
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        guard let layer else { return }
+        layer.cornerRadius = cornerRadius
+        layer.masksToBounds = true
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer.backgroundColor = Self.color.cgColor
+        }
+    }
+
+    /// Light and dark mode switch the color.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
 }
 
 /// A hosting view that can let clicks through to the view behind it (the menu bar button
