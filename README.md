@@ -1,10 +1,133 @@
-# AI Tempomat
+<p align="center">
+  <img src="docs/assets/icon-256.png" width="128" height="128" alt="AI Tempomat icon">
+</p>
 
-A macOS menu bar gauge for your Claude Code plan limits. The switch at the top of the panel picks how the big dial reads.
+<h1 align="center">AI Tempomat</h1>
 
-It follows one account: the one `claude` is signed in to (`claude auth status` names it). Sign `claude` in to another account and the app follows it, though its history doesn't tell the two apart. The sessions it counts are the ones run on that account. A second desktop instance signed in to another account (such as `Claude-Work`, started with `--user-data-dir`) keeps its sessions in `~/.claude` too, and the app leaves those out (see **Which account ran a session** below).
+<p align="center">
+  <b>Cruise control for your Claude Code limits.</b><br>
+  A macOS menu bar gauge that shows how fast your agents burn through your 5-hour and weekly limits,<br>
+  and whether that pace gets you to the reset.
+</p>
+
+<p align="center">
+  <img alt="macOS 14 or later" src="https://img.shields.io/badge/macOS-14%2B-1d1d20?logo=apple&logoColor=white">
+  <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white">
+  <img alt="Claude Code 2.1.29x or later" src="https://img.shields.io/badge/Claude%20Code-2.1.29x%2B-D97757">
+  <img alt="Data stays on your Mac" src="https://img.shields.io/badge/data-stays%20on%20your%20Mac-4CB35E">
+</p>
+
+<p align="center">
+  <a href="https://taremeh.github.io/tempomat-ai/"><b>Website</b></a> ·
+  <a href="#install">Install</a> ·
+  <a href="#reading-the-dial">Reading the dial</a> ·
+  <a href="#ethical-considerations">Ethical considerations</a> ·
+  <a href="#reference">Reference</a>
+</p>
+
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/expanded.dark.png">
+  <img src="docs/assets/expanded.png" width="900" alt="The expanded view: every session as a ribbon of tokens per minute on the left, the tempomat dial at 123% relative pace in the middle, and the sessions running now with the limit outlook on the right.">
+</picture>
+</p>
+
+## Why
+
+When you work with agents on a Claude plan, two questions keep coming up:
+
+- **Am I going to hit the limit too early, the way I'm working right now?**
+- **Or could I have started a lot more work in this window?**
+
+`/usage` gives you a percentage, and that answers neither. Whether 62% used is too much depends on how long the window still has to run, and with a few agents going at once it's hard to judge.
+
+AI Tempomat answers both with one number: your pace against the pace that would use the rest of the window exactly at reset. Over 100%, you'll hit the limit before the reset, and the menu bar tells you when. Under 100%, budget will be left over, so there's room for more work if you have it. (*Tempomat* is German for cruise control.)
+
+## What you get
+
+- **A gauge in your menu bar.** `92% pace`, `38% left` or `62% used`, plus the time you'd run out when you're going too fast: `123% pace · 17:44`.
+- **Four ways to read it.** Relative pace like a speedometer, or Total like a fuel gauge. Averaged over the whole window, or over the last 30 minutes so it reacts to what you're doing now.
+- **Which agent burns what.** The expanded view draws every Claude Code session as a ribbon of tokens per minute, lists what's running now with its open tasks and subagents, and charts where the limit is heading.
+- **Every window, kept.** The History page keeps each 5-hour window: how much you used, what you left unused at reset, when you hit the limit and how long you waited. Spread one out to find its peaks and what burnt them, down to the subagent and the prompt.
+- **Local, and free to run.** Limits come from `claude -p "/usage"`, which never calls the model and costs no quota. Tokens come from Claude Code's transcripts in `~/.claude`. Nothing leaves your Mac.
+
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/history.dark.png">
+  <img src="docs/assets/history.png" width="900" alt="The History page: a summary of the last 7 days, a bar per 5-hour window, tiles per day, and the current window broken down on the right.">
+</picture>
+</p>
+
+## Ethical considerations
+
+**Don't start agents just so the budget isn't "wasted".**
+
+The dial shows when there's room left in the window. That doesn't mean the room has to be filled. Unused budget isn't waste: a window that resets with 20% left used no extra energy at all.
+
+Tokens that get spent do. Every request runs on GPUs in a data center that draw electricity and need cooling, and depending on where and when that power is generated, it adds to carbon emissions and water use. Spent on real work, that can be worth it. Spent to fill a quota, it isn't.
+
+So use the room when there's work waiting that's worth doing, and let the window reset when there isn't. Treat 100% as a ceiling to plan against, not a score to hit.
+
+## Install
+
+You need macOS 14 or later, the Xcode command line tools, and Claude Code 2.1.29x or later.
+
+The app reads usage by running `claude -p "/usage"`. This is a local command, so it never calls the model and costs no quota. The terminal CLI needs its own login, because the desktop app's login isn't shared with it. Run this once:
+
+```bash
+claude auth login
+```
+
+Then clone, build, install and launch the app:
+
+```bash
+git clone https://github.com/Taremeh/tempomat-ai.git
+cd tempomat-ai
+./scripts/build-app.sh --install
+```
+
+Check that the CLI side works without the UI:
+
+```bash
+.build/release/AITempomat --print-usage
+```
+
+Run the tests:
+
+```bash
+./scripts/test.sh
+```
+
+### Which account it follows
+
+It follows one account: the one `claude` is signed in to (`claude auth status` names it). Sign `claude` in to another account and the app follows it, though its history doesn't tell the two apart. The sessions it counts are the ones run on that account. A second desktop instance signed in to another account (such as `Claude-Work`, started with `--user-data-dir`) keeps its sessions in `~/.claude` too, and the app leaves those out (see **Which account ran a session** under [How it works](#reference)).
 
 For several accounts side by side, Claude desktop logins and ChatGPT/Codex, build the [`multi-profile`](https://github.com/Taremeh/tempomat-ai/tree/multi-profile) branch instead. Both are the same app (`local.ai-tempomat`), so installing one replaces the other, and they share this account's history and settings.
+
+## Reading the dial
+
+The switch at the top of the panel picks how the big dial reads.
+
+<table>
+  <tr>
+    <td align="center" width="25%"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/dial-1.dark.png">
+  <img src="docs/assets/dial-1.png" alt="Relative and Sensitive: 123% relative pace">
+</picture><br><sub><b>Relative · Sensitive</b><br>123%: you'd run out at 2:47</sub></td>
+    <td align="center" width="25%"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/dial-2.dark.png">
+  <img src="docs/assets/dial-2.png" alt="Relative and Overall: 92% relative pace">
+</picture><br><sub><b>Relative · Overall</b><br>92%: about 3% left at reset</sub></td>
+    <td align="center" width="25%"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/dial-3.dark.png">
+  <img src="docs/assets/dial-3.png" alt="Total and Left: 38% left">
+</picture><br><sub><b>Total · Left</b><br>38% in the tank</sub></td>
+    <td align="center" width="25%"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/dial-4.dark.png">
+  <img src="docs/assets/dial-4.png" alt="Total and Used: 62% used">
+</picture><br><sub><b>Total · Used</b><br>62% burned so far</sub></td>
+  </tr>
+</table>
 
 **Total** works like a fuel gauge, from 0 to 100% of the limit:
 - **Left:** what's still in the tank, from E to F. The red stripe is the last 10%.
@@ -32,7 +155,10 @@ The big dial shows the limit Claude Code picks: usually the 5-hour one, and a we
 
 The menu bar shows `38% left`, `62% used` or `123% pace`. When the pace runs out before the reset, it adds the time, for example `62% used · 17:44`.
 
-## Expanded view
+## Reference
+
+<details>
+<summary><b>Expanded view</b></summary>
 
 The icon at the top right of the panel switches between the reduced view (the tempomat alone) and the expanded view, which shows the past, the present and what lies ahead side by side. Your choice is remembered. The panel opens centered under the menu bar reading, so the tempomat sits right below it in either view (near a screen edge, the panel stops at the edge).
 
@@ -53,7 +179,10 @@ The icon at the top right of the panel switches between the reduced view (the te
   - Both follow the Left/Used and Overall/Sensitive switches. Hover either chart to read its values at that time.
   - The charts start when the app started recording, so a window that opened earlier shows a gap at the start.
 
-## History page
+</details>
+
+<details>
+<summary><b>History page</b></summary>
 
 The clock icon at the top right opens the History page: every 5-hour window, past and current, and how much of each you used. It is a page of its own, not the History column of the expanded view. The arrow at the top left goes back to the tempomat, and the panel always opens on the tempomat.
 
@@ -83,33 +212,10 @@ The clock icon at the top right opens the History page: every 5-hour window, pas
 
 **What each session did.** With each window, the app keeps what every session did in it: your prompts (the first 200 characters of each), when its tasks were in progress, and each subagent's tokens per 5 minutes, with the workflow it ran in. Windows kept before the app did this get it filled in once from the transcripts still on disk; a window whose transcripts are gone keeps its tokens, and its sessions are drawn without prompts or subagents.
 
-## Setup
+</details>
 
-The app reads usage by running `claude -p "/usage"`. This is a local command, so it never calls the model and costs no quota. The terminal CLI needs its own login, because the desktop app's login isn't shared with it. Run this once:
-
-```bash
-claude auth login
-```
-
-Then build, install and launch the app:
-
-```bash
-./scripts/build-app.sh --install
-```
-
-Check that the CLI side works without the UI:
-
-```bash
-.build/release/AITempomat --print-usage
-```
-
-Run the tests:
-
-```bash
-./scripts/test.sh
-```
-
-## How it works
+<details>
+<summary><b>How it works</b></summary>
 
 - **Data:** the `usage_report.rate_limits.limits[]` rows from `/usage` (stream-json output). The report is marked experimental, so its shape may change. Supported since Claude Code 2.1.29x.
 - **CLI:** the app uses the newest `claude` binary it can find, including the copy bundled with the Claude desktop app.
@@ -136,7 +242,10 @@ Run the tests:
 - **Running subagents:** those whose transcript changed in the last 45 seconds. Finished workflows leave a file in `<session>/workflows/`.
 - **Polling:** one scan at launch, then every 5 seconds while the panel is open. The first scan reads every transcript in full, which takes a few seconds with long sessions.
 
-## Options
+</details>
+
+<details>
+<summary><b>Options</b></summary>
 
 ```bash
 defaults write local.ai-tempomat claudePath /path/to/claude
@@ -148,7 +257,10 @@ defaults write local.ai-tempomat refreshInterval -float 60
 
 The interval is in seconds, with a minimum of 30.
 
-## Development
+</details>
+
+<details>
+<summary><b>Development</b></summary>
 
 ```bash
 swift run AITempomat --demo
@@ -179,3 +291,5 @@ swift run AITempomat --export-history ~/Desktop
 ```
 
 `--demo` runs with fake data. `--open-panel` opens the panel right after launch. `--render-preview` writes the reduced panel in all four modes to a PNG, and the expanded panel to an `.expanded.png` beside it, each with a `.dark.png` copy. `--print-fleet` prints the Claude Code sessions running now, as the expanded view reads them. `--render-expanded` renders the expanded panel from live data: your plan usage and its recorded history, and the running sessions. `--render-preview` also writes the History page with fake data to a `.history.png`, and its newest window expanded, in full, to a `.history.window.png`. `--print-history` lists the past 5-hour windows with their prompts and subagents, `--render-history` renders the History page from your data (and its newest window expanded to a `.window.png`), and `--export-history` writes the JSON and CSV export into a folder. These read the saved files and change nothing.
+
+</details>
