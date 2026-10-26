@@ -18,5 +18,5 @@ BRANCHES = "main,multi-profile"
 [[d1_databases]]
 binding = "DB"
 database_name = "tempomat-ai"
-# REPLACE THIS with the database_id that `npx wrangler d1 create tempomat-ai` prints.
-database_id = "REPLACE-WITH-DATABASE-ID-FROM-wrangler-d1-create"
+# What `npx wrangler d1 create tempomat-ai` printed. A fork creates its own and puts its id here.
+database_id = "f78f3597-4126-47f8-a809-3cc0712c7cfc"
