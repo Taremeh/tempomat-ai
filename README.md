@@ -14,12 +14,13 @@
   <img alt="macOS 14 or later" src="https://img.shields.io/badge/macOS-14%2B-1d1d20?logo=apple&logoColor=white">
   <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white">
   <img alt="Claude Code 2.1.29x or later" src="https://img.shields.io/badge/Claude%20Code-2.1.29x%2B-D97757">
-  <img alt="Data stays on your Mac" src="https://img.shields.io/badge/data-stays%20on%20your%20Mac-4CB35E">
+  <img alt="Usage data stays on your Mac" src="https://img.shields.io/badge/usage%20data-stays%20on%20your%20Mac-4CB35E">
 </p>
 
 <p align="center">
   <a href="https://taremeh.github.io/tempomat-ai/"><b>Website</b></a> ·
   <a href="#install">Install</a> ·
+  <a href="#updates-and-the-daily-check">Updates</a> ·
   <a href="#reading-the-dial">Reading the dial</a> ·
   <a href="#ethical-considerations">Ethical considerations</a> ·
   <a href="#reference">Reference</a>
@@ -49,7 +50,7 @@ AI Tempomat answers both with one number: your pace against the pace that would 
 - **Four ways to read it.** Relative pace like a speedometer, or Total like a fuel gauge. Averaged over the whole window, or over the last 30 minutes so it reacts to what you're doing now.
 - **Which agent burns what.** The expanded view draws every Claude Code session as a ribbon of tokens per minute, lists what's running now with its open tasks and subagents, and charts where the limit is heading.
 - **Every window, kept.** The History page keeps each 5-hour window: how much you used, what you left unused at reset, when you hit the limit and how long you waited. Spread one out to find its peaks and what burnt them, down to the subagent and the prompt.
-- **Local, and free to run.** Limits come from `claude -p "/usage"`, which never calls the model and costs no quota. Tokens come from Claude Code's transcripts in `~/.claude`. Nothing leaves your Mac.
+- **Local, and free to run.** Limits come from `claude -p "/usage"`, which never calls the model and costs no quota. Tokens come from Claude Code's transcripts in `~/.claude`. Your usage and tokens stay on your Mac: the only thing the app sends is a [check for updates](#updates-and-the-daily-check) at launch and once a day, with its version numbers, the macOS version, its branch and four yes/no flags, and no ID. You can turn it off.
 
 <p align="center">
 <picture>
@@ -103,6 +104,59 @@ Run the tests:
 It follows one account: the one `claude` is signed in to (`claude auth status` names it). Sign `claude` in to another account and the app follows it, though its history doesn't tell the two apart. The sessions it counts are the ones run on that account. A second desktop instance signed in to another account (such as `Claude-Work`, started with `--user-data-dir`) keeps its sessions in `~/.claude` too, and the app leaves those out (see **Which account ran a session** under [How it works](#reference)).
 
 For several accounts side by side, Claude desktop logins and ChatGPT/Codex, build the [`multi-profile`](https://github.com/Taremeh/tempomat-ai/tree/multi-profile) branch instead. Both are the same app (`local.ai-tempomat`), so installing one replaces the other, and they share this account's history and settings.
+
+## Updates and the daily check
+
+Once a day, and at launch, the app asks the AI Tempomat server whether a new version is out. That request is also how the author counts how many people use the app.
+
+**What it sends.** The app's version and build, the macOS version, the git branch you built it from if it's `main` or `multi-profile` (any other branch goes out empty), and four yes/no flags: whether this is its first check today, this week, this month, and ever. A check looks like this:
+
+```
+GET /v1/check?v=0.2&b=2&os=26.6&branch=main&day=1&week=0&month=0&first=0
+User-Agent: AITempomat/0.2
+```
+
+That's all. There's no ID of any kind, no cookie, and nothing about your usage, sessions, account or files.
+
+**How it counts without an ID.** Each install remembers when its last check got through. It sets the day flag on its first check of a new day (in UTC), the week flag on its first check of a new week, the month flag on its first check of a new month, and the first flag only once, ever. The server adds them up: the day flags of a day are the installs that ran that day, the week flags the installs that ran that week, and so on, and the first flags are new installs. A check that doesn't get through is tried again an hour later, so the day isn't lost. If the answer is lost after the server got the check, though, the retry counts again: without an ID, exactly once isn't possible, so the numbers are close rather than exact.
+
+**What the server keeps.** Daily totals per app version and macOS version: how many checks came in, and how many of each flag. No IP addresses, no user agents, and no row per request. The branch only picks which release to compare with, and isn't kept. Cloudflare's database does keep a 7-day history of its changes for recovery (30 days on a paid plan), so for that long the minute a total went up could be read back; after that, only the daily totals are left. Cloudflare handles the request, so it sees your IP address like any web server does, but the server's code doesn't store it. The code is in [`server/`](server).
+
+**Turning it off.** Uncheck **Check for updates** at the bottom of the panel, or run:
+
+```bash
+defaults write local.ai-tempomat checkForUpdates -bool false
+```
+
+The app reads it before every check, so this works while it runs. Off means the app sends nothing at all, and it won't tell you about new versions either. It never checks in `--demo` mode or the command-line modes such as `--print-usage`, and a build without a server address (`checkURL` in `version.json`) never checks at all and shows no checkbox.
+
+### Updating
+
+When a new version is out, the panel says so. **Update** pulls the folder you built the app from (`git pull --ff-only`) and runs `./scripts/build-app.sh --install`, which builds the new version, replaces the app and restarts it. That takes about a minute. If that folder is in Documents or Desktop, macOS asks whether AI Tempomat may open it, the first time and again after updates, since each build is signed anew.
+
+This works for a clone of this repository on `main` or `multi-profile`. If the folder is on another branch now, or the pull doesn't bring the new version (a fork, say), the update stops and says so instead of building the same version again. An app built from a branch of your own still checks, but doesn't offer releases.
+
+If the update fails (changes of your own in that folder, no network, a remote that asks for a password), the app keeps running and the panel shows the line that says why, with the command to run yourself. The same goes for a folder that has moved. Run it in the folder you built the app from:
+
+```bash
+git pull && ./scripts/build-app.sh --install
+```
+
+Each update writes its output to `~/Library/Logs/AI Tempomat/update.log`, and **Show log** opens it. Apps built before the update check came in don't have the button, so update those once by hand.
+
+### For maintainers and forks
+
+[`version.json`](version.json) is the release. `version` and `build` are the version numbers (`build` only goes up), `notes` is the line the panel shows for the new version, `url` is an optional page about what's new, and `checkURL` is the server's address. `build-app.sh` builds `version`, `build` and `checkURL` into the app.
+
+To release, raise `build` and `version`, write the notes, and push to `main`. The server reads `version.json` from GitHub, so the push is the release. Apps built from `multi-profile` compare with that branch's `version.json`. With `checkURL` empty, the app never checks. To run your own server, see [`server/README.md`](server/README.md).
+
+To see what a check gets back, without counting as an active user (every flag is `0`; only the day's check total goes up), run:
+
+```bash
+"$HOME/Applications/AI Tempomat.app/Contents/MacOS/AITempomat" --check-for-updates
+```
+
+It takes another server's URL after the flag too. The first release with a `checkURL` counts every existing install as new once, since none has checked before.
 
 ## Reading the dial
 
@@ -256,6 +310,18 @@ defaults write local.ai-tempomat refreshInterval -float 60
 ```
 
 The interval is in seconds, with a minimum of 30.
+
+```bash
+defaults write local.ai-tempomat checkForUpdates -bool false
+```
+
+Turns off the daily update check, like the **Check for updates** checkbox in the panel, also while the app runs. It's on unless you set this (see [Updates and the daily check](#updates-and-the-daily-check)).
+
+```bash
+defaults write local.ai-tempomat updateCheckURL https://example.com/v1/check
+```
+
+Sends the update check to another server instead of the `checkURL` the app was built with, for testing or a fork. Quit and reopen the app after setting it. Its checks are counted apart from the built-in server's, so testing doesn't use up the app's first check of the day.
 
 </details>
 

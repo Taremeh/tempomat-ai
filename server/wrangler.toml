@@ -1,0 +1,22 @@
+# The update check and active-user counter for AI Tempomat. See README.md.
+name = "tempomat-ai"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+
+# Workers Logs stay off, so nothing about single requests is kept.
+[observability]
+enabled = false
+
+[vars]
+# Where the latest release is read from. {branch} becomes one of BRANCHES.
+VERSION_URL = "https://raw.githubusercontent.com/Taremeh/tempomat-ai/{branch}/version.json"
+# The branches a client may ask about. Any other branch gets main's release.
+BRANCHES = "main,multi-profile"
+
+# The secret STATS_TOKEN guards /v1/stats. Set it with `npx wrangler secret put STATS_TOKEN`, never here.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tempomat-ai"
+# REPLACE THIS with the database_id that `npx wrangler d1 create tempomat-ai` prints.
+database_id = "REPLACE-WITH-DATABASE-ID-FROM-wrangler-d1-create"

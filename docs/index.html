@@ -265,7 +265,8 @@
       <div>
         <h2>Where the numbers come from</h2>
         <p>It runs <code>claude -p "/usage"</code> every two minutes. That's a local command: it doesn't call the model and costs no quota.</p>
-        <p>Token counts come from Claude Code's own transcripts in <code>~/.claude</code>, and the history is kept in <code>~/Library/Application Support/AI Tempomat</code>. Nothing leaves your Mac.</p>
+        <p>Token counts come from Claude Code's own transcripts in <code>~/.claude</code>, and the history is kept in <code>~/Library/Application Support/AI Tempomat</code>. Your usage stays on your Mac.</p>
+        <p>The one thing the app sends is a check for new versions, at launch and once a day: its version numbers and the macOS version, the branch if it's main or multi-profile, and whether it's the first check today, this week, this month or ever. No ID. That's also how the author counts how many people use it. A checkbox in the panel turns it off, and <a href="https://github.com/Taremeh/tempomat-ai#updates-and-the-daily-check">the README</a> lists exactly what's sent.</p>
       </div>
       <div id="install">
         <h2>Try it</h2>
@@ -277,7 +278,7 @@ git clone https://github.com/Taremeh/tempomat-ai.git
 cd tempomat-ai && ./scripts/build-app.sh --install</pre>
           <button class="copy" type="button" id="copy-install">Copy</button>
         </div>
-        <p>The script builds the app, puts it in <code>~/Applications</code> and starts it. Ideas and bug reports are welcome <a href="https://github.com/Taremeh/tempomat-ai">on GitHub</a>.</p>
+        <p>The script builds the app, puts it in <code>~/Applications</code> and starts it. When a new version is out, the panel can update it for you. Ideas and bug reports are welcome <a href="https://github.com/Taremeh/tempomat-ai">on GitHub</a>.</p>
       </div>
     </div>
   </section>

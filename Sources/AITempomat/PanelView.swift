@@ -14,6 +14,7 @@ struct PanelView: View {
     @AppStorage(SettingsKey.mode) private var mode = DisplayMode.relative
     @AppStorage(SettingsKey.amount) private var amount = AmountShown.left
     @AppStorage(SettingsKey.paceMethod) private var paceMethod = PaceMethod.sensitive
+    private var updates: UpdateChecker { .shared }
 
     init(store: UsageStore, fleet: FleetStore, page: PanelPage = .tempomat) {
         self.store = store
@@ -35,6 +36,10 @@ struct PanelView: View {
                 HistoryPage(store: store, fleet: fleet)
             }
 
+            if updates.checksForUpdates, let release = updates.available {
+                UpdateBanner(release: release, state: updates.installState, folder: updates.installFolder,
+                             install: { updates.install() }, showLog: { updates.showLog() })
+            }
             Divider()
             footer
         }
@@ -169,6 +174,18 @@ struct PanelView: View {
                 store.setOpensAtLogin(!store.opensAtLogin)
             } label: {
                 Label("Open at login", systemImage: store.opensAtLogin ? "checkmark.square.fill" : "square")
+            }
+            // A build without a check URL never checks, so there's nothing to turn off.
+            if updates.canCheck {
+                Button {
+                    updates.setChecksForUpdates(!updates.checksForUpdates)
+                } label: {
+                    Label("Check for updates", systemImage: updates.checksForUpdates ? "checkmark.square.fill" : "square")
+                }
+                .padding(.leading, 6)
+                .help("At launch and once a day, asks whether a newer version is out. It sends the app's version and build, the "
+                      + "macOS version, the branch if it's main or multi-profile, and whether it's the first check today, this "
+                      + "week, this month or ever, which is how active users are counted. No ID, nothing about your usage.")
             }
             Spacer()
             Button("Quit") { NSApp.terminate(nil) }

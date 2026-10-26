@@ -20,6 +20,9 @@ struct AITempomatApp: App {
         if arguments.contains("--print-history") {
             Self.printHistory()
         }
+        if let index = arguments.firstIndex(of: "--check-for-updates") {
+            UpdateCheck.printCheck(arguments.dropFirst(index + 1).first)
+        }
         if let index = arguments.firstIndex(of: "--export-history"), index + 1 < arguments.count {
             Self.exportHistory(to: URL(fileURLWithPath: arguments[index + 1]))
         }
@@ -35,6 +38,7 @@ struct AITempomatApp: App {
             ? UsageStore(source: DemoSource(), history: DemoSource.history(), archive: DemoSource.archive(), persist: false)
             : UsageStore(source: ClaudeCLISource(), persist: true, transcripts: .standard)
         store.start()
+        if !isDemo { UpdateChecker.shared.start() }
         let fleet = isDemo
             ? FleetStore(scanner: nil, sessions: DemoFleet.sessions())
             : FleetStore(scanner: FleetScanner())

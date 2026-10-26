@@ -41,4 +41,12 @@ enum SettingsKey {
     static let paceMethod = "paceMethod"
     /// The meter swapped onto the big gauge and the server's pick it replaced.
     static let gaugeChoice = "gaugeChoice"
+    /// Whether the app asks once a day if a newer version is out. On unless turned off.
+    static let checkForUpdates = "checkForUpdates"
+    /// When the server last answered an update check, so the day, week and month flags go out until one is answered.
+    static let updateCheckCounted = "updateCheckCounted"
+    /// A check URL in place of the one built into the app, for testing a server or a fork's.
+    static let updateCheckURL = "updateCheckURL"
+    /// When that server last answered a check, kept apart from the app's own server's.
+    static let updateCheckCountedOverride = "updateCheckCountedOverride"
 }
