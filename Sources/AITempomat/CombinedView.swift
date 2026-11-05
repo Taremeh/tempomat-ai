@@ -114,6 +114,30 @@ struct AgentHistory: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
+        // More sessions than the column has room for scroll, with the clock times kept under them.
+        ViewThatFits(in: .vertical) {
+            VStack(alignment: .leading, spacing: 8) {
+                lanes(sessions, burns: burns, fullScale: fullScale, unit: unit, now: now, window: window)
+                TimeLabels(window: window, range: range)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                ScrollView {
+                    lanes(sessions, burns: burns, fullScale: fullScale, unit: unit, now: now, window: window)
+                        .padding(.trailing, 10)
+                }
+                TimeLabels(window: window, range: range)
+                    .padding(.trailing, 10)
+            }
+        }
+
+        Text("Thicker means more \(unit) per minute, full thickness at \(Format.tokens(fullScale))/min or more. A thin line means busy without tokens.")
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func lanes(_ sessions: [FleetSession], burns: [TokenBurn], fullScale: Double, unit: String, now: Date,
+                       window: ClosedRange<Date>) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
                 let color = SeriesPalette.color(fleet.slots[session.id], scheme)
@@ -145,13 +169,7 @@ struct AgentHistory: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(session.name): \(Format.tokens(burns[index].total)) \(unit) in the \(range.caption)")
             }
-            TimeLabels(window: window, range: range)
         }
-
-        Text("Thicker means more \(unit) per minute, full thickness at \(Format.tokens(fullScale))/min or more. A thin line means busy without tokens.")
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

@@ -47,8 +47,11 @@ struct UsageOutlook: View {
             }
 
             if let meter {
-                let points = store.trajectory(for: meter, method: paceMethod)
-                let domain = Self.domain(for: meter, points: points)
+                let recorded = store.trajectory(for: meter, method: paceMethod)
+                let domain = Self.domain(for: meter, points: recorded)
+                // The readings also go back before the window opened (they measure the pace), but
+                // the charts don't clip what lies outside their time axis.
+                let points = recorded.filter { domain.contains($0.t) }
                 let pace = store.pace(for: meter, method: paceMethod)
 
                 AmountHistoryChart(meter: meter, points: points, pace: pace, amount: amount, domain: domain)

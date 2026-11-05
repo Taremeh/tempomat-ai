@@ -191,8 +191,9 @@ enum PreviewRenderer {
             defaults.set(PanelLayout.expanded.rawValue, forKey: SettingsKey.panelLayout)
             defaults.set(false, forKey: SettingsKey.historyExpanded)
             for scheme in [ColorScheme.light, .dark] {
+                // Both pages can scroll: the History page, and the expanded tempomat's sessions.
                 write(PanelView(store: store, fleet: fleet, page: page).defaultAppStorage(defaults), scheme: scheme, to: url,
-                      hosted: page == .history)
+                      hosted: true)
             }
             if page == .history {
                 let window = url.deletingPathExtension().appendingPathExtension("window").appendingPathExtension(url.pathExtension)

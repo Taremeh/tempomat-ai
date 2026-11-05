@@ -62,6 +62,9 @@ struct PanelView: View {
         HStack(alignment: .top, spacing: 18) {
             AgentHistory(fleet: fleet)
                 .frame(width: 290)
+                // As tall as the columns beside it, however many sessions there are (they scroll),
+                // so the panel stays on the screen.
+                .frame(minHeight: 0, idealHeight: 0, maxHeight: .infinity, alignment: .top)
             Divider()
             VStack(alignment: .leading, spacing: 14) { tempomat }
                 .frame(width: 308)
