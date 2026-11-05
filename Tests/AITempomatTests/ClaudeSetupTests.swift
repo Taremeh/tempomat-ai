@@ -103,6 +103,27 @@ import Testing
         #expect(try String(contentsOf: folder.appending(path: "stdin"), encoding: .utf8) == "empty\n")
     }
 
+    @MainActor @Test func switchingFillsInTheEmailAndChecksWhereItLanded() async throws {
+        let (folder, claude) = try Self.fakeClaude(Self.prints + "\nexit 0")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let target = try #require(ClaudeLogin(account: UUID().uuidString, organization: nil, email: "work@example.com"))
+        let other = try #require(ClaudeLogin(account: UUID().uuidString, organization: nil, email: "me@example.com"))
+
+        let landed = ClaudeSetup(findClaude: { claude }, claudeLogin: { target })
+        landed.signIn(as: target) { nil }
+        #expect(landed.signInTarget == target)
+        try await Self.wait { landed.signInState == .idle }
+        #expect(landed.signInTarget == nil)
+        #expect(try String(contentsOf: folder.appending(path: "arguments"), encoding: .utf8)
+                == "auth login --claudeai --email work@example.com\n")
+
+        // Approved in the browser with the account it was already on.
+        let stayed = ClaudeSetup(findClaude: { claude }, claudeLogin: { other })
+        stayed.signIn(as: target) { nil }
+        try await Self.wait { stayed.signInState == .failed(ClaudeSetup.signedInElsewhere(other, target: target)) }
+        #expect(stayed.signInTarget == target)
+    }
+
     @MainActor @Test func signInThatLeavesTheCLISignedOutFails() async throws {
         let (folder, claude) = try Self.fakeClaude(Self.prints + "\nexit 0")
         defer { try? FileManager.default.removeItem(at: folder) }

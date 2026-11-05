@@ -49,4 +49,6 @@ enum SettingsKey {
     static let updateCheckURL = "updateCheckURL"
     /// When that server last answered a check, kept apart from the app's own server's.
     static let updateCheckCountedOverride = "updateCheckCountedOverride"
+    /// The pair of accounts (`claude`'s, the running sessions') whose notice was put away with Not now.
+    static let dismissedAccountNotice = "dismissedAccountNotice"
 }

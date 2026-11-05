@@ -14,6 +14,9 @@ struct PanelView: View {
     @AppStorage(SettingsKey.mode) private var mode = DisplayMode.relative
     @AppStorage(SettingsKey.amount) private var amount = AmountShown.left
     @AppStorage(SettingsKey.paceMethod) private var paceMethod = PaceMethod.sensitive
+    @AppStorage(SettingsKey.dismissedAccountNotice) private var dismissedAccountNotice = ""
+    /// The account card, opened from the header.
+    @State private var showsAccount = false
     private var updates: UpdateChecker { .shared }
 
     init(store: UsageStore, fleet: FleetStore, page: PanelPage = .tempomat) {
@@ -49,7 +52,10 @@ struct PanelView: View {
         .hoverCardLayer()
         .onAppear { store.refreshIfStale() }
         // The panel opens on the tempomat.
-        .onDisappear { page = .tempomat }
+        .onDisappear {
+            page = .tempomat
+            showsAccount = false
+        }
     }
 
     private func show(_ page: PanelPage) {
@@ -84,6 +90,13 @@ struct PanelView: View {
 
         if let problem = store.problem {
             ProblemBanner(problem: problem, store: store)
+        }
+
+        // Signing in is the problem banner's while `claude` isn't signed in at all.
+        if store.problem?.action != .signIn,
+           showsAccount || AccountCard.notice(fleet.logins, dismissed: dismissedAccountNotice) != nil {
+            AccountCard(logins: fleet.logins, store: store,
+                        close: showsAccount ? { withAnimation(.snappy(duration: 0.25)) { showsAccount = false } } : nil)
         }
 
         if let headline = store.headline {
@@ -122,6 +135,14 @@ struct PanelView: View {
                 Text("Updated \(lastUpdated.formatted(date: .omitted, time: .shortened))")
             }
             Button {
+                withAnimation(.snappy(duration: 0.25)) { showsAccount.toggle() }
+            } label: {
+                Image(systemName: fleet.logins.elsewhere.isEmpty ? "person.crop.circle" : "person.crop.circle.badge.exclamationmark")
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 4)
+            .help(accountHelp)
+            Button {
                 Task {
                     async let usage: Void = store.refresh()
                     async let sessions: Void = fleet.refresh()
@@ -153,6 +174,14 @@ struct PanelView: View {
         }
         .font(.caption)
         .foregroundStyle(.secondary)
+    }
+
+    private var accountHelp: String {
+        let claude = fleet.logins.claude?.email.map { "Limits for \($0). " } ?? ""
+        if let other = fleet.logins.elsewhere.first {
+            return claude + "Running sessions use \(other.login.email ?? "another account"). Click to switch."
+        }
+        return claude + "Click to switch account."
     }
 
     private var controls: some View {

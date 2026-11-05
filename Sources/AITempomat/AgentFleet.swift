@@ -374,6 +374,35 @@ extension Data {
 
 // MARK: - Scanning the fleet
 
+/// Which accounts the running Claude Code sessions use, beside the one `claude` is signed in to,
+/// whose limits the panel shows. The desktop app signed in to another account runs its sessions there.
+struct RunningLogins: Equatable, Sendable {
+    /// The login `claude` uses, if known.
+    var claude: ClaudeLogin?
+    /// How many running sessions were started on each login, where their process says.
+    var started: [ClaudeLogin: Int] = [:]
+
+    struct Elsewhere: Hashable, Sendable {
+        let login: ClaudeLogin
+        let sessions: Int
+    }
+
+    /// The logins running sessions use other than `claude`'s, most sessions first. Empty while
+    /// `claude`'s login isn't known.
+    var elsewhere: [Elsewhere] {
+        guard let claude else { return [] }
+        return started.filter { !claude.matches($0.key) }
+            .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key.account < $1.key.account }
+            .map { Elsewhere(login: $0.key, sessions: $0.value) }
+    }
+
+    /// The login most running sessions use, whatever `claude` uses: the account to suggest signing in to.
+    var busiest: ClaudeLogin? {
+        started.max { $0.value != $1.value ? $0.value < $1.value : $0.key.account > $1.key.account }?.key
+    }
+}
+
+
 /// Finds the running sessions in `~/.claude/sessions` that count (see `SessionScope`) and reads
 /// what their transcripts added since the last scan.
 actor FleetScanner {
@@ -407,14 +436,26 @@ actor FleetScanner {
         self.scope = scope
     }
 
+    /// The logins the running sessions were started on, and the one `claude` uses, as the last scan found them.
+    private(set) var logins = RunningLogins()
+
     func scan(now: Date = Date()) -> [FleetSession] {
-        let filter = scope.filter()
         let registryDir = scope.folder.appending(path: "sessions")
         let entries = (try? FileManager.default.contentsOfDirectory(at: registryDir, includingPropertiesForKeys: nil)) ?? []
-        let registries = entries
+        let running = entries
             .filter { $0.pathExtension == "json" && Int32($0.deletingPathExtension().lastPathComponent) != nil }
             .compactMap { try? JSONDecoder().decode(Registry.self, from: Data(contentsOf: $0)) }
-            .filter { filter.includes($0.sessionId, host: $0.hostSessionId) && Self.isClaude(pid: $0.pid) }
+            .filter { Self.isClaude(pid: $0.pid) }
+        // Before the filter is taken, so it goes by them.
+        var started: [ClaudeLogin: Int] = [:]
+        for entry in running {
+            guard let login = ClaudeLogin.running(pid: entry.pid) else { continue }
+            scope.learn(entry.sessionId, host: entry.hostSessionId, startedOn: login)
+            started[login, default: 0] += 1
+        }
+        let filter = scope.filter()
+        logins = RunningLogins(claude: filter.login, started: started)
+        let registries = running.filter { filter.includes($0.sessionId, host: $0.hostSessionId) }
 
         let sessions = registries.map { session(for: $0, now: now) }
         // Forget the transcripts of sessions that ended, unless they still count for recent usage.
@@ -659,6 +700,8 @@ final class FleetStore {
     private(set) var isScanning = false
     /// Categorical color slot per session, kept for as long as it runs.
     private(set) var slots: [String: Int] = [:]
+    /// The accounts the running sessions use, and the one `claude` uses.
+    private(set) var logins = RunningLogins()
 
     private let scanner: FleetScanner?
     private var pollTask: Task<Void, Never>?
@@ -706,6 +749,8 @@ final class FleetStore {
         defer { isScanning = false }
         let now = Date()
         let scanned = await scanner.scan(now: now)
+        let logins = await scanner.logins
+        if logins != self.logins { self.logins = logins }
         recentSessions = await scanner.recentSessions(since: now.addingTimeInterval(-Self.recentSpan))
         recentRequests = recentSessions.flatMap(\.requests).sorted { $0.t < $1.t }
         apply(scanned, at: now)

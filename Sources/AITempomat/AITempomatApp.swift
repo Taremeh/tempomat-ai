@@ -54,6 +54,10 @@ struct AITempomatApp: App {
             let fleet = FleetStore(scanner: FleetScanner())
             await fleet.refresh()
             let now = fleet.lastUpdated ?? Date()
+            print("claude is signed in to \(fleet.logins.claude?.email ?? fleet.logins.claude?.account ?? "an unknown account")")
+            for other in fleet.logins.elsewhere {
+                print("not counted: \(other.sessions) running on \(other.login.email ?? other.login.account)")
+            }
             for session in fleet.sessions {
                 let state = session.isBusy ? "busy" : "idle"
                 print("\(session.isBusy ? "●" : "○") \(session.name) [\(session.project), \(state) \(Format.duration(now.timeIntervalSince(session.statusSince))),"

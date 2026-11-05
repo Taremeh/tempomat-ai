@@ -33,9 +33,18 @@ final class ClaudeSetup {
     static let signInFailed = "Sign-in didn't finish. Try again, or run the command below in Terminal."
     static let signInTimedOut = "Sign-in timed out."
 
+    /// Why a switch to `target` ended on `now` instead.
+    static func signedInElsewhere(_ now: ClaudeLogin?, target: ClaudeLogin) -> String {
+        "Claude Code is now signed in to \(now?.email ?? "another account"), not \(target.email ?? "the account you picked"). "
+            + "On claude.com, switch to that account first, then try again."
+    }
+
     private(set) var signInState = SignInState.idle {
         didSet { if case .failed = signInState { signInFailedAt = .now } }
     }
+    /// The account the sign-in under way, or the one that failed, means to switch to; nil for
+    /// whichever account you approve in the browser.
+    private(set) var signInTarget: ClaudeLogin?
     private(set) var installState = InstallState.idle {
         didSet { if case .failed = installState { installFailedAt = .now } }
     }
@@ -43,6 +52,8 @@ final class ClaudeSetup {
     @ObservationIgnored private var installFailedAt = Date.distantPast
 
     private let findClaude: @Sendable () async -> URL?
+    /// The login `claude` uses now, to check a switch landed on the account it meant to.
+    private let claudeLogin: @Sendable () -> ClaudeLogin?
     private let signInTimeout: Duration
     private let installFolder: URL
     private let openInTerminal: @MainActor (URL) async throws -> Void
@@ -57,12 +68,16 @@ final class ClaudeSetup {
     /// `findClaude` finds the binary the usage check runs; `installFolder` is where the installer
     /// script is written. The rest is for tests.
     init(findClaude: @escaping @Sendable () async -> URL? = { await ClaudeBinary.newest()?.url },
+         claudeLogin: @escaping @Sendable () -> ClaudeLogin? = {
+             SessionScope.standard.settingsFile.flatMap(ClaudeLogin.read(settings:))
+         },
          signInTimeout: Duration = .seconds(600),
          installFolder: URL = ClaudeInstaller.folder,
          openInTerminal: @escaping @MainActor (URL) async throws -> Void = ClaudeInstaller.openInTerminal,
          lookInterval: Duration = .seconds(5),
          installTimeout: Duration = .seconds(600)) {
         self.findClaude = findClaude
+        self.claudeLogin = claudeLogin
         self.signInTimeout = signInTimeout
         self.installFolder = installFolder
         self.openInTerminal = openInTerminal
@@ -80,7 +95,10 @@ final class ClaudeSetup {
     /// banner wasn't there (the panel closed for the browser) is shown when it comes back, unless
     /// it's older than `age`: by then it's about an attempt you've likely forgotten.
     func forgetFailures(olderThan age: TimeInterval = 0) {
-        if case .failed = signInState, Date.now.timeIntervalSince(signInFailedAt) >= age { signInState = .idle }
+        if case .failed = signInState, Date.now.timeIntervalSince(signInFailedAt) >= age {
+            signInState = .idle
+            signInTarget = nil
+        }
         if case .failed = installState, Date.now.timeIntervalSince(installFailedAt) >= age { installState = .idle }
     }
 
@@ -89,15 +107,19 @@ final class ClaudeSetup {
     /// Runs `claude auth login --claudeai`, which opens claude.com in the browser and finishes by
     /// itself once you approve there. Then `refresh` reads usage again, and the banner goes with
     /// the problem. One sign-in at a time; it gives up after 10 minutes.
-    func signIn(refresh: @escaping Refresh) {
+    ///
+    /// With a `target`, it switches Claude Code to that account: its email fills in the sign-in
+    /// page, and it fails if you approved with another account after all.
+    func signIn(as target: ClaudeLogin? = nil, refresh: @escaping Refresh) {
         if case .signingIn = signInState { return }
         signInRun += 1
         let run = signInRun
+        signInTarget = target
         signInState = .signingIn(link: nil)
         signInTask = Task {
             var outcome = ClaudeSignIn.Outcome.notStarted
             if let claude = await findClaude() {
-                outcome = await ClaudeSignIn.run(claude, timeout: signInTimeout) { link in
+                outcome = await ClaudeSignIn.run(claude, email: target?.email, timeout: signInTimeout) { link in
                     Task { @MainActor in self.found(link, run: run) }
                 }
             }
@@ -107,7 +129,14 @@ final class ClaudeSetup {
                 let problem = await refresh()
                 guard run == signInRun else { return }
                 // Still not signed in to a plan: a login of another kind, or none after all.
-                signInState = problem?.action == .signIn ? .failed(Self.signInFailed) : .idle
+                if problem?.action == .signIn {
+                    signInState = .failed(Self.signInFailed)
+                } else if let target, let now = claudeLogin(), !now.matches(target) {
+                    signInState = .failed(Self.signedInElsewhere(now, target: target))
+                } else {
+                    signInState = .idle
+                    signInTarget = nil
+                }
             case .timedOut:
                 signInState = .failed(Self.signInTimedOut)
             default:
@@ -123,6 +152,7 @@ final class ClaudeSetup {
         signInTask?.cancel()
         signInTask = nil
         signInState = .idle
+        signInTarget = nil
     }
 
     private func found(_ link: URL, run: Int) {
@@ -188,13 +218,19 @@ enum ClaudeSignIn {
 
     static let arguments = ["auth", "login", "--claudeai"]
 
+    /// `arguments`, with `email` filled in on the sign-in page.
+    static func arguments(email: String?) -> [String] {
+        arguments + (email.map { ["--email", $0] } ?? [])
+    }
+
     /// Runs the login until it exits, `timeout` passes or the task is cancelled; in the last two
     /// cases the CLI is terminated. `link` gets the sign-in page once the CLI has printed it. The
     /// output is read for that link only, never kept or logged: it can hold account details.
-    static func run(_ claude: URL, timeout: Duration, link: @escaping @Sendable (URL) -> Void) async -> Outcome {
+    static func run(_ claude: URL, email: String? = nil, timeout: Duration,
+                    link: @escaping @Sendable (URL) -> Void) async -> Outcome {
         let process = Process()
         process.executableURL = claude
-        process.arguments = arguments
+        process.arguments = arguments(email: email)
         process.currentDirectoryURL = FileManager.default.temporaryDirectory
         process.environment = ProcessRunner.environment(inheriting: ProcessInfo.processInfo.environment)
         process.standardInput = FileHandle.nullDevice
@@ -491,7 +527,7 @@ struct ClaudeSetupActions: View {
 
 /// The banner's button, drawn here: a prominent system button turns gray in the panel, which
 /// never activates the app.
-private struct AccentButton: View {
+struct AccentButton: View {
     let title: String
     let action: () -> Void
 

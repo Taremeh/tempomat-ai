@@ -65,7 +65,92 @@ import Testing
         #expect(sessions["local_work"] == fixture.workLogin)
     }
 
+    /// Newer desktop apps file a copy of every record under each login they've been signed in to.
+    @Test func recordsUnderEveryLoginTellNothingButTheProcessDoes() throws {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        try fixture.writeRecord("local_work", session: fixture.workDesktop, under: fixture.personalLogin,
+                                in: fixture.personalDesktopFolder)
+        let personal = fixture.scope(settings: fixture.personalSettings)
+        #expect(fixture.logins.desktopSessions()[fixture.workDesktop] == nil)
+        #expect(personal.filter().includes(fixture.workDesktop))
+
+        // While it runs, its process says it was started on the work account.
+        personal.learn(fixture.workDesktop, host: "local_work", startedOn: fixture.workLogin)
+        #expect(personal.filter().isForeign(fixture.workDesktop))
+        #expect(!personal.filter().includes(UUID().uuidString.lowercased(), host: "local_work"))
+        #expect(personal.filter().ranOn(fixture.workDesktop) == fixture.workLogin)
+    }
+
+    @Test func runningLoginsTellTheOtherAccountsApart() throws {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let workOtherOrg = try #require(ClaudeLogin(account: fixture.workLogin.account, organization: UUID().uuidString))
+        var logins = RunningLogins(claude: fixture.personalLogin,
+                                   started: [fixture.personalLogin: 2, fixture.workLogin: 3, workOtherOrg: 1])
+        #expect(logins.elsewhere.map(\.login) == [fixture.workLogin, workOtherOrg])
+        #expect(logins.elsewhere.map(\.sessions) == [3, 1])
+        #expect(logins.busiest == fixture.workLogin)
+        logins.claude = nil
+        #expect(logins.elsewhere.isEmpty)
+    }
+
+    @Test func emailIsNotPartOfTheLogin() throws {
+        let account = UUID().uuidString
+        let named = try #require(ClaudeLogin(account: account, organization: nil, email: "a@example.com"))
+        #expect(named == ClaudeLogin(account: account, organization: nil))
+        #expect(named.email == "a@example.com")
+        #expect(ClaudeLogin(account: account, organization: nil, email: "not an email")?.email == nil)
+    }
+
+    /// The layout `KERN_PROCARGS2` gives: argc, the executable, padding, the arguments, the environment.
+    @Test func startedLoginComesFromTheEnvironmentOnly() throws {
+        let account = UUID().uuidString.lowercased(), organization = UUID().uuidString.lowercased()
+        func bytes(_ argc: Int32, _ strings: [String], padding: Int = 3) -> ArraySlice<UInt8> {
+            var data = withUnsafeBytes(of: argc.littleEndian) { Array($0) }
+            data += Array(strings[0].utf8) + [UInt8](repeating: 0, count: padding)
+            for string in strings.dropFirst() { data += Array(string.utf8) + [0] }
+            return data[...]
+        }
+        let started = ClaudeLogin.started(from: bytes(2, [
+            "/path/claude", "claude", "CLAUDE_CODE_ACCOUNT_UUID=\(UUID().uuidString)",
+            "HOME=/Users/me", "CLAUDE_CODE_ACCOUNT_UUID=\(account)", "CLAUDE_CODE_ORGANIZATION_UUID=\(organization)",
+            "CLAUDE_CODE_USER_EMAIL=me@example.com", "", "garbage",
+        ]))
+        #expect(started == ClaudeLogin(account: account, organization: organization))
+        #expect(started?.email == "me@example.com")
+        #expect(ClaudeLogin.started(from: bytes(1, ["/path/claude", "claude", "HOME=/Users/me"])) == nil)
+        #expect(ClaudeLogin.started(from: [1, 0][...]) == nil)
+    }
+
+    /// macOS hides the environment of its own binaries, so the process is a re-signed copy of sleep.
+    @Test func startedLoginReadsARunningProcess() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "AITempomatProcessTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let sleep = folder.appending(path: "sleep")
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: sleep)
+        for arguments in [["--remove-signature", sleep.path], ["-s", "-", sleep.path]] {
+            let codesign = try Process.run(URL(fileURLWithPath: "/usr/bin/codesign"), arguments: arguments)
+            codesign.waitUntilExit()
+            try #require(codesign.terminationStatus == 0)
+        }
+
+        let account = UUID().uuidString.lowercased()
+        let process = Process()
+        process.executableURL = sleep
+        process.arguments = ["5"]
+        process.environment = ["CLAUDE_CODE_ACCOUNT_UUID": account, "CLAUDE_CODE_USER_EMAIL": "me@example.com"]
+        try process.run()
+        defer { process.terminate() }
+        let started = ClaudeLogin.running(pid: process.processIdentifier)
+        #expect(started == ClaudeLogin(account: account, organization: nil))
+        #expect(started?.email == "me@example.com")
+        #expect(ClaudeLogin.running(pid: -1) == nil)
+    }
+
     @Test func loginsMatchByAccountAndKnownOrganization() throws {
+
         let account = UUID().uuidString, organization = UUID().uuidString, other = UUID().uuidString
         let login = try #require(ClaudeLogin(account: account, organization: organization))
         #expect(login.account == account.lowercased())
