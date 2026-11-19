@@ -15,6 +15,8 @@
   <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white">
   <img alt="Claude Code 2.1.29x or later" src="https://img.shields.io/badge/Claude%20Code-2.1.29x%2B-D97757">
   <img alt="Usage data stays on your Mac" src="https://img.shields.io/badge/usage%20data-stays%20on%20your%20Mac-4CB35E">
+  <a href="https://github.com/Taremeh/tempomat-ai/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/Taremeh/tempomat-ai/actions/workflows/tests.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1d1d20"></a>
 </p>
 
 <p align="center">
@@ -387,3 +389,7 @@ swift run AITempomat --export-history ~/Desktop
 `--demo` runs with fake data. `--open-panel` opens the panel right after launch. `--render-preview` writes the reduced panel in all four modes to a PNG, and the expanded panel to an `.expanded.png` beside it, each with a `.dark.png` copy. `--print-fleet` prints the Claude Code sessions running now, as the expanded view reads them. `--render-expanded` renders the expanded panel from live data: your plan usage and its recorded history, and the running sessions. `--render-preview` also writes the History page with fake data to a `.history.png`, and its newest window expanded, in full, to a `.history.window.png`. `--print-history` lists the past 5-hour windows with their prompts and subagents, `--render-history` renders the History page from your data (and its newest window expanded to a `.window.png`), and `--export-history` writes the JSON and CSV export into a folder. These read the saved files and change nothing.
 
 </details>
+
+## License
+
+[MIT](LICENSE)
