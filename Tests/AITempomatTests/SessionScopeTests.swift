@@ -143,7 +143,12 @@ import Testing
         process.environment = ["CLAUDE_CODE_ACCOUNT_UUID": account, "CLAUDE_CODE_USER_EMAIL": "me@example.com"]
         try process.run()
         defer { process.terminate() }
-        let started = ClaudeLogin.running(pid: process.processIdentifier)
+        // The environment is readable only once the child has finished exec, which a loaded machine delays.
+        var started = ClaudeLogin.running(pid: process.processIdentifier)
+        for _ in 0..<40 where started == nil {
+            Thread.sleep(forTimeInterval: 0.05)
+            started = ClaudeLogin.running(pid: process.processIdentifier)
+        }
         #expect(started == ClaudeLogin(account: account, organization: nil))
         #expect(started?.email == "me@example.com")
         #expect(ClaudeLogin.running(pid: -1) == nil)
